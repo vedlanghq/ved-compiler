@@ -9,7 +9,7 @@ pub enum Token {
     Goal,
     Reconcile,
     Migration,
-    
+
     // Execution & Scheduling
     Start,
     Step,
@@ -37,6 +37,11 @@ pub enum Token {
     If,
     Else,
     Let,
+    While,
+
+    // Literals
+    True,
+    False,
 
     // Symbols & Operators
     LBrace,      // {
@@ -100,6 +105,9 @@ impl std::fmt::Display for Token {
             Token::If => write!(f, "'if'"),
             Token::Else => write!(f, "'else'"),
             Token::Let => write!(f, "'let'"),
+            Token::While => write!(f, "'while'"),
+            Token::True => write!(f, "'true'"),
+            Token::False => write!(f, "'false'"),
             Token::LBrace => write!(f, "'{{'"),
             Token::RBrace => write!(f, "'}}'"),
             Token::LParen => write!(f, "'('"),
@@ -125,6 +133,7 @@ impl std::fmt::Display for Token {
             Token::StringLiteral(s) => write!(f, "string \"{}\"", s),
             Token::EOF => write!(f, "end of file"),
             Token::Unknown(c) => write!(f, "unknown character '{}'", c),
+
         }
     }
 }
@@ -158,7 +167,7 @@ impl<'a> Lexer<'a> {
             }
         }
     }
-    
+
     fn read_identifier_or_keyword(&mut self) -> Token {
         let start = self.position;
         while let Some(c) = self.peek_char() {
@@ -198,6 +207,9 @@ impl<'a> Lexer<'a> {
             "if" => Token::If,
             "else" => Token::Else,
             "let" => Token::Let,
+            "while" => Token::While,
+            "true" => Token::True,
+            "false" => Token::False,
             _ => Token::Identifier(text.to_string()),
         }
     }
@@ -246,14 +258,38 @@ impl<'a> Lexer<'a> {
         }
 
         match ch {
-            '{' => { self.advance_char(); Token::LBrace }
-            '}' => { self.advance_char(); Token::RBrace }
-            '(' => { self.advance_char(); Token::LParen }
-            ')' => { self.advance_char(); Token::RParen }
-            ':' => { self.advance_char(); Token::Colon }
-            '.' => { self.advance_char(); Token::Dot }
-            ',' => { self.advance_char(); Token::Comma }
-            '+' => { self.advance_char(); Token::Plus }
+            '{' => {
+                self.advance_char();
+                Token::LBrace
+            }
+            '}' => {
+                self.advance_char();
+                Token::RBrace
+            }
+            '(' => {
+                self.advance_char();
+                Token::LParen
+            }
+            ')' => {
+                self.advance_char();
+                Token::RParen
+            }
+            ':' => {
+                self.advance_char();
+                Token::Colon
+            }
+            '.' => {
+                self.advance_char();
+                Token::Dot
+            }
+            ',' => {
+                self.advance_char();
+                Token::Comma
+            }
+            '+' => {
+                self.advance_char();
+                Token::Plus
+            }
             '-' => {
                 self.advance_char();
                 if self.peek_char() == Some('>') {
@@ -263,9 +299,18 @@ impl<'a> Lexer<'a> {
                     Token::Minus
                 }
             }
-            '*' => { self.advance_char(); Token::Asterisk }
-            '/' => { self.advance_char(); Token::Slash }
-            '%' => { self.advance_char(); Token::Modulo }
+            '*' => {
+                self.advance_char();
+                Token::Asterisk
+            }
+            '/' => {
+                self.advance_char();
+                Token::Slash
+            }
+            '%' => {
+                self.advance_char();
+                Token::Modulo
+            }
             '=' => {
                 self.advance_char();
                 if self.peek_char() == Some('=') {
@@ -303,7 +348,10 @@ impl<'a> Lexer<'a> {
                 }
             }
             '"' => self.read_string(),
-            _ => { self.advance_char(); Token::Unknown(ch) },
+            _ => {
+                self.advance_char();
+                Token::Unknown(ch)
+            }
         }
     }
 }

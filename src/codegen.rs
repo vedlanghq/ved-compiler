@@ -114,6 +114,13 @@ impl<'a> FuncGen<'a> {
                 self.emit(OpCode::LoadConst { const_idx, dest_reg });
                 dest_reg
             }
+            Expr::BoolLiteral(v) => {
+                let const_val = if *v { 1 } else { 0 };
+                let const_idx = self.add_constant(Constant::Int(const_val));
+                let dest_reg = self.alloc_reg();
+                self.emit(OpCode::LoadConst { const_idx, dest_reg });
+                dest_reg
+            }
             Expr::StringLiteral(v) => {
                 let const_idx = self.add_constant(Constant::String(v.clone()));
                 let dest_reg = self.alloc_reg();
@@ -157,21 +164,42 @@ impl<'a> FuncGen<'a> {
             }
             Expr::If { condition, consequence } => {
                 let cond_reg = self.compile_expr(condition);
-                
+
                 // Placeholder for jump - we emit a jumpiffalse, then patch its offset later
                 let jmp_idx = self.instructions.len();
                 self.emit(OpCode::JumpIfFalse { test_reg: cond_reg, target_offset: 0 }); // offset 0 for now
-                
+
                 for step in consequence {
                     self.compile_expr(step);
                 }
-                
+
                 let target = self.instructions.len();
                 if let OpCode::JumpIfFalse { target_offset, .. } = &mut self.instructions[jmp_idx] {
                     *target_offset = target;
                 }
-                
+
                 cond_reg // returns condition bool register for now...
+            }
+            Expr::While { condition, body } => {
+                let start_idx = self.instructions.len();
+                let cond_reg = self.compile_expr(condition);
+
+                let jmp_idx = self.instructions.len();
+                self.emit(OpCode::JumpIfFalse { test_reg: cond_reg, target_offset: 0 });
+
+                for step in body {
+                    self.compile_expr(step);
+                }
+
+                // Jump back to start
+                self.emit(OpCode::Jump { target_offset: start_idx });
+
+                let target = self.instructions.len();
+                if let OpCode::JumpIfFalse { target_offset, .. } = &mut self.instructions[jmp_idx] {
+                    *target_offset = target;
+                }
+
+                cond_reg
             }
             Expr::Send { target, message } => {
                 let target_const_idx = self.add_constant(Constant::String(target.clone()));

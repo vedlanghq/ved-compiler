@@ -29,7 +29,7 @@ impl SemanticValidator {
         }
     }
 
-    pub fn validate(&mut self, ast: &Ast) -> Result<(), Vec<SemanticError>> {
+    pub fn validate(&mut self, ast: &Ast) -> Result<(), Vec<SemanticError>> {   
         let mut errors = Vec::new();
 
         // Pass 1: Catalog all domain states
@@ -43,7 +43,7 @@ impl SemanticValidator {
                         "bool" => VedType::Bool,
                         other => VedType::Unknown(other.to_string()),
                     };
-                    
+
                     if let VedType::Unknown(ref t) = v_type {
                         errors.push(SemanticError {
                             message: format!("Domain '{}': Unknown type '{}' for field '{}'", domain.name, t, field.name),
@@ -55,7 +55,7 @@ impl SemanticValidator {
                             message: format!("Domain '{}': Duplicate state field '{}'", domain.name, field.name),
                         });
                     } else {
-                        state_fields.insert(field.name.clone(), v_type);
+                        state_fields.insert(field.name.clone(), v_type);        
                     }
                 }
 
@@ -66,17 +66,17 @@ impl SemanticValidator {
         // Pass 2: Validate Goals and Transitions against State
         for stmt in &ast.statements {
             if let Statement::DomainDecl(domain) = stmt {
-                let domain_info = self.domains.get(&domain.name).unwrap();
+                let domain_info = self.domains.get(&domain.name).unwrap();      
 
-                // Validate Goals
+                // Validate Goals (Strictly Pure)
                 for goal in &domain.goals {
-                    self.validate_expr(&domain.name, &goal.target, domain_info, &mut errors);
+                    self.validate_expr(&domain.name, &goal.target, domain_info, true, &mut errors);
                 }
 
-                // Validate Transitions
+                // Validate Transitions (Allow Mutations/Effects)
                 for transition in &domain.transitions {
                     for expr in &transition.slice_step {
-                        self.validate_expr(&domain.name, &expr, domain_info, &mut errors);
+                        self.validate_expr(&domain.name, &expr, domain_info, false, &mut errors);
                     }
                 }
             }
@@ -89,7 +89,7 @@ impl SemanticValidator {
         }
     }
 
-    fn validate_expr(&self, domain_name: &str, expr: &Expr, domain_info: &DomainInfo, errors: &mut Vec<SemanticError>) {
+    fn validate_expr(&self, domain_name: &str, expr: &Expr, domain_info: &DomainInfo, is_pure_context: bool, errors: &mut Vec<SemanticError>) {
         match expr {
             Expr::Ident(name) => {
                 if !domain_info.state_fields.contains_key(name) {
@@ -99,37 +99,60 @@ impl SemanticValidator {
                 }
             }
             Expr::Assignment { target, value } => {
+                if is_pure_context {
+                    errors.push(SemanticError {
+                        message: format!("Domain '{}': Illegal mutation of '{}'. Goals must be strictly read-only and side-effect free.", domain_name, target),
+                    });
+                }
                 if !domain_info.state_fields.contains_key(target) {
                     errors.push(SemanticError {
                         message: format!("Domain '{}': Cannot assign to undefined state variable '{}'", domain_name, target),
                     });
                 }
-                self.validate_expr(domain_name, value, domain_info, errors);
-                // Future consideration: Add type checking here (e.g., target type == value type)
+                self.validate_expr(domain_name, value, domain_info, is_pure_context, errors);    
             }
             Expr::BinaryOp { left, right, .. } => {
-                self.validate_expr(domain_name, left, domain_info, errors);
-                self.validate_expr(domain_name, right, domain_info, errors);
+                self.validate_expr(domain_name, left, domain_info, is_pure_context, errors);     
+                self.validate_expr(domain_name, right, domain_info, is_pure_context, errors);    
             }
             Expr::If { condition, consequence } => {
-                self.validate_expr(domain_name, condition, domain_info, errors);
+                self.validate_expr(domain_name, condition, domain_info, is_pure_context, errors);
                 for step in consequence {
-                    self.validate_expr(domain_name, step, domain_info, errors);
+                    self.validate_expr(domain_name, step, domain_info, is_pure_context, errors);
+                }
+            }
+            Expr::While { condition, body } => {
+                if let Expr::BoolLiteral(true) = **condition {
+                    errors.push(SemanticError {
+                        message: format!("Domain '{}': Unbounded `while(true)` loops are forbidden to preserve slice computation bounds.", domain_name),
+                    });
+                }
+                
+                self.validate_expr(domain_name, condition, domain_info, is_pure_context, errors);
+                for step in body {
+                    self.validate_expr(domain_name, step, domain_info, is_pure_context, errors);
                 }
             }
             Expr::Send { target: _, message: _ } => {
-                // Ensure target domain exists? Could be checked here eventually.
+                if is_pure_context {
+                    errors.push(SemanticError {
+                        message: format!("Domain '{}': Illegal effect 'send'. Goals must be strictly side-effect free.", domain_name),
+                    });
+                }
             }
             Expr::SendHigh { target: _, message: _ } => {
-                // High priority send
+                if is_pure_context {
+                    errors.push(SemanticError {
+                        message: format!("Domain '{}': Illegal effect 'send_high'. Goals must be strictly side-effect free.", domain_name),
+                    });
+                }
             }
-            Expr::IntLiteral(_) | Expr::StringLiteral(_) => {
+            Expr::IntLiteral(_) | Expr::StringLiteral(_) | Expr::BoolLiteral(_) => {
                 // Literals are inherently valid.
             }
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -183,6 +206,24 @@ mod tests {
         assert_eq!(errors.len(), 1);
         assert!(errors[0].message.contains("undefined state variable 'status'"));
     }
+
+    #[test]
+    fn test_invalid_goal_mutation() {
+        let input = r#"
+        domain WebServer {
+            state {
+                status: string
+            }
+            goal ensure_run {
+                target status = "online"
+            }
+        }
+        "#;
+        let ast = parse(lex(input)).unwrap();
+        let mut validator = SemanticValidator::new();
+        let result = validator.validate(&ast);
+        assert!(result.is_err());
+        let errors = result.err().unwrap();
+        assert!(errors.iter().any(|e| e.message.contains("Illegal mutation of 'status'")));
+    }
 }
-
-

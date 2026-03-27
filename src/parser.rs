@@ -240,6 +240,17 @@ impl Parser {
                 self.consume(Token::RParen)?;
                 Ok(Expr::SendHigh { target, message })
             }
+            Token::While => {
+                self.consume(Token::While)?;
+                let condition = Box::new(self.parse_expression()?);
+                self.consume(Token::LBrace)?;
+                let mut body = Vec::new();
+                while !self.check(&Token::RBrace) && self.pos < self.tokens.len() {
+                    body.push(self.parse_statement_or_expr()?);
+                }
+                self.consume(Token::RBrace)?;
+                Ok(Expr::While { condition, body })
+            }
             Token::If => {
                 self.consume(Token::If)?;
                 let condition = Box::new(self.parse_expression()?);
@@ -293,10 +304,12 @@ impl Parser {
             Token::IntLiteral(v) => Expr::IntLiteral(*v),
             Token::StringLiteral(s) => Expr::StringLiteral(s.clone()),
             Token::Identifier(id) => Expr::Ident(id.clone()),
+            Token::True => Expr::BoolLiteral(true),
+            Token::False => Expr::BoolLiteral(false),
             other => return Err(format!("Unexpected token in expression: {}", other)),
         };
 
-        if [Token::Plus, Token::Minus, Token::Asterisk, Token::Slash, Token::EqualEqual, Token::LessThan, Token::GreaterThan, Token::GTEqual, Token::LTEqual].contains(self.peek()) {
+        if [Token::Plus, Token::Minus, Token::Asterisk, Token::Slash, Token::EqualEqual, Token::LessThan, Token::GreaterThan, Token::GTEqual, Token::LTEqual, Token::Equal].contains(self.peek()) {
             let op = match self.advance() {
                 Token::Plus => "+".to_string(),
                 Token::Minus => "-".to_string(),
@@ -305,9 +318,19 @@ impl Parser {
                 Token::GreaterThan => ">".to_string(),
                 Token::GTEqual => ">=".to_string(),
                 Token::LTEqual => "<=".to_string(),
+                Token::Equal => "=".to_string(),
                 _ => unreachable!(),
             };
             let right = Box::new(self.parse_expression()?);
+            
+            if op == "=" {
+                if let Expr::Ident(id) = left {
+                    return Ok(Expr::Assignment { target: id, value: right });
+                } else {
+                    return Err("Invalid assignment target".to_string());
+                }
+            }
+            
             return Ok(Expr::BinaryOp { left: Box::new(left), op, right });
         }
 

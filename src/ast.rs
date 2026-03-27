@@ -56,6 +56,7 @@ pub enum Expr {
     Ident(String),
     IntLiteral(i64),
     StringLiteral(String),
+    BoolLiteral(bool),
     Send {
         target: String,
         message: String,
@@ -67,6 +68,10 @@ pub enum Expr {
     If {
         condition: Box<Expr>,
         consequence: Vec<Expr>,
+    },
+    While {
+        condition: Box<Expr>,
+        body: Vec<Expr>,
     },
 }
 

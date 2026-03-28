@@ -1,4 +1,4 @@
-use crate::ast::{Ast, Expr, Statement, DomainDecl};
+use crate::ast::{Ast, Expr, ExprKind, StatementKind, DomainDecl};
 use std::collections::HashMap;
 pub use ved_ir::bytecode::*;
 
@@ -15,7 +15,7 @@ impl CodeGenerator {
 
     pub fn generate(mut self, ast: &Ast) -> BytecodeProgram {
         for stmt in &ast.statements {
-            if let Statement::DomainDecl(domain) = stmt {
+            if let StatementKind::DomainDecl(domain) = &stmt.kind {
                 let domain_code = self.generate_domain(domain);
                 self.program.domains.push(domain_code);
             }
@@ -107,27 +107,27 @@ impl<'a> FuncGen<'a> {
 
     /// Compiles an expression and returns the register containing its result
     fn compile_expr(&mut self, expr: &Expr) -> u8 {
-        match expr {
-            Expr::IntLiteral(v) => {
+        match &expr.kind {
+            ExprKind::IntLiteral(v) => {
                 let const_idx = self.add_constant(Constant::Int(*v));
                 let dest_reg = self.alloc_reg();
                 self.emit(OpCode::LoadConst { const_idx, dest_reg });
                 dest_reg
             }
-            Expr::BoolLiteral(v) => {
+            ExprKind::BoolLiteral(v) => {
                 let const_val = if *v { 1 } else { 0 };
                 let const_idx = self.add_constant(Constant::Int(const_val));
                 let dest_reg = self.alloc_reg();
                 self.emit(OpCode::LoadConst { const_idx, dest_reg });
                 dest_reg
             }
-            Expr::StringLiteral(v) => {
+            ExprKind::StringLiteral(v) => {
                 let const_idx = self.add_constant(Constant::String(v.clone()));
                 let dest_reg = self.alloc_reg();
                 self.emit(OpCode::LoadConst { const_idx, dest_reg });
                 dest_reg
             }
-            Expr::Ident(name) => {
+            ExprKind::Ident(name) => {
                 let dest_reg = self.alloc_reg();
                 if let Some(&field_idx) = self.field_map.get(name) {
                     self.emit(OpCode::LoadState { field_idx, dest_reg });
@@ -137,14 +137,14 @@ impl<'a> FuncGen<'a> {
                 }
                 dest_reg
             }
-            Expr::Assignment { target, value } => {
+            ExprKind::Assignment { target, value } => {
                 let src_reg = self.compile_expr(value);
                 if let Some(&field_idx) = self.field_map.get(target) {
                     self.emit(OpCode::StoreState { src_reg, field_idx });
                 }
                 src_reg
             }
-            Expr::BinaryOp { left, op, right } => {
+            ExprKind::BinaryOp { left, op, right } => {
                 let r1 = self.compile_expr(left);
                 let r2 = self.compile_expr(right);
                 let dest = self.alloc_reg();
@@ -162,7 +162,7 @@ impl<'a> FuncGen<'a> {
                 self.emit(opcode);
                 dest
             }
-            Expr::If { condition, consequence } => {
+            ExprKind::If { condition, consequence } => {
                 let cond_reg = self.compile_expr(condition);
 
                 // Placeholder for jump - we emit a jumpiffalse, then patch its offset later
@@ -180,7 +180,7 @@ impl<'a> FuncGen<'a> {
 
                 cond_reg // returns condition bool register for now...
             }
-            Expr::While { condition, body } => {
+            ExprKind::While { condition, body } => {
                 let start_idx = self.instructions.len();
                 let cond_reg = self.compile_expr(condition);
 
@@ -201,17 +201,17 @@ impl<'a> FuncGen<'a> {
 
                 cond_reg
             }
-            Expr::Call { function: _, arguments: _ } => {
+            ExprKind::Call { function: _, arguments: _ } => {
                 // Not supported in bytecode generation yet, returning dummy register
                 0
             }
-            Expr::Send { target, message } => {
+            ExprKind::Send { target, message } => {
                 let target_const_idx = self.add_constant(Constant::String(target.clone()));
                 let msg_const_idx = self.add_constant(Constant::String(message.clone()));
                 self.emit(OpCode::SendMsg { target_const_idx, msg_const_idx });
                 self.alloc_reg() // Return dummy register
             }
-            Expr::SendHigh { target, message } => {
+            ExprKind::SendHigh { target, message } => {
                 let target_const_idx = self.add_constant(Constant::String(target.clone()));
                 let msg_const_idx = self.add_constant(Constant::String(message.clone()));
                 self.emit(OpCode::SendHighMsg { target_const_idx, msg_const_idx });

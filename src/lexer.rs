@@ -1,3 +1,11 @@
+#[derive(Debug, Clone, PartialEq, Default, Copy)]
+pub struct Span {
+    pub offset: usize,
+    pub len: usize,
+    pub line: usize,
+    pub column: usize,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     // System Structure Keywords
@@ -147,11 +155,18 @@ impl std::fmt::Display for Token {
 pub struct Lexer<'a> {
     input: &'a str,
     position: usize,
+    line: usize,
+    column: usize,
 }
 
 impl<'a> Lexer<'a> {
     pub fn new(input: &'a str) -> Self {
-        Lexer { input, position: 0 }
+        Lexer { 
+            input, 
+            position: 0,
+            line: 1,
+            column: 1,
+        }
     }
 
     fn peek_char(&self) -> Option<char> {
@@ -161,6 +176,12 @@ impl<'a> Lexer<'a> {
     fn advance_char(&mut self) -> Option<char> {
         let ch = self.peek_char()?;
         self.position += ch.len_utf8();
+        if ch == '\n' {
+            self.line += 1;
+            self.column = 1;
+        } else {
+            self.column += 1;
+        }
         Some(ch)
     }
 
@@ -251,22 +272,37 @@ impl<'a> Lexer<'a> {
         Token::StringLiteral(text.to_string())
     }
 
-    pub fn next_token(&mut self) -> Token {
+    pub fn next_token(&mut self) -> (Token, Span) {
         self.skip_whitespace();
+        
+        let start_pos = self.position;
+        let start_line = self.line;
+        let start_col = self.column;
 
-        let ch = match self.peek_char() {
-            Some(c) => c,
-            None => return Token::EOF,
+        let tok = match self.peek_char() {
+            Some(c) => {
+                if c.is_alphabetic() || c == '_' {
+                    self.read_identifier_or_keyword()
+                } else if c.is_ascii_digit() {
+                    self.read_number()
+                } else {
+                    self.read_symbol(c)
+                }
+            }
+            None => Token::EOF,
         };
 
-        if ch.is_alphabetic() || ch == '_' {
-            return self.read_identifier_or_keyword();
-        }
+        let span = Span {
+            offset: start_pos,
+            len: self.position - start_pos,
+            line: start_line,
+            column: start_col,
+        };
 
-        if ch.is_ascii_digit() {
-            return self.read_number();
-        }
+        (tok, span)
+    }
 
+    fn read_symbol(&mut self, ch: char) -> Token {
         match ch {
             '{' => {
                 self.advance_char();
@@ -366,16 +402,16 @@ impl<'a> Lexer<'a> {
     }
 }
 
-pub fn lex(input: &str) -> Vec<Token> {
+pub fn lex(input: &str) -> Vec<(Token, Span)> {
     let mut lexer = Lexer::new(input);
     let mut tokens = Vec::new();
     loop {
-        let tok = lexer.next_token();
-        if tok == Token::EOF {
-            tokens.push(tok);
+        let (tok, span) = lexer.next_token();
+        let is_eof = tok == Token::EOF;
+        tokens.push((tok, span));
+        if is_eof {
             break;
         }
-        tokens.push(tok);
     }
     tokens
 }

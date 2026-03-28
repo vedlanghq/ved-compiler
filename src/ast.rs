@@ -1,5 +1,13 @@
+use crate::lexer::Span;
+
 #[derive(Debug, Clone)]
-pub enum Statement {
+pub struct Statement {
+    pub kind: StatementKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum StatementKind {
     DomainDecl(DomainDecl),
     SystemDecl(SystemDecl),
     EnvironmentDecl(EnvironmentDecl),
@@ -29,19 +37,22 @@ pub struct DomainDecl {
 #[derive(Debug, Clone)]
 pub struct StateField {
     pub name: String,
-    pub typ: String, // e.g. "int"
+    pub typ: String,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct GoalDecl {
     pub name: String,
     pub target: Expr,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct TransitionDecl {
     pub name: String,
-    pub slice_step: Vec<Expr>, // Using Expr for block statements for now
+    pub slice_step: Vec<Expr>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -53,11 +64,17 @@ pub struct SystemDecl {
 #[derive(Debug, Clone)]
 pub struct StartDomain {
     pub name: String,
-    pub init_state: Vec<Expr>, // Initialization assignments
+    pub init_state: Vec<Expr>,
 }
 
 #[derive(Debug, Clone)]
-pub enum Expr {
+pub struct Expr {
+    pub kind: ExprKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum ExprKind {
     BinaryOp {
         left: Box<Expr>,
         op: String,

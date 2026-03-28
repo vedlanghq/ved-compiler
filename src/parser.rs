@@ -1,36 +1,40 @@
-use crate::lexer::Token;
+use crate::lexer::{Token, Span};
 use crate::ast::*;
 
 pub struct Parser {
-    tokens: Vec<Token>,
+    tokens: Vec<(Token, Span)>,
     pos: usize,
 }
 
 impl Parser {
-    pub fn new(tokens: Vec<Token>) -> Self {
+    pub fn new(tokens: Vec<(Token, Span)>) -> Self {
         Parser { tokens, pos: 0 }
     }
 
-    fn peek(&self) -> &Token {
-        self.tokens.get(self.pos).unwrap_or(&Token::EOF)
+    fn peek(&self) -> &(Token, Span) {
+        if self.pos < self.tokens.len() {
+            &self.tokens[self.pos]
+        } else {
+            &self.tokens.last().unwrap()
+        }
     }
 
-    fn advance(&mut self) -> &Token {
+    fn advance(&mut self) -> &(Token, Span) {
         if self.pos < self.tokens.len() {
             self.pos += 1;
         }
-        self.tokens.get(self.pos - 1).unwrap_or(&Token::EOF)
+        &self.tokens[self.pos - 1]
     }
 
     fn check(&self, expected: &Token) -> bool {
-        self.peek() == expected
+        &self.peek().0 == expected
     }
 
-    fn consume(&mut self, expected: Token) -> Result<&Token, String> {
+    fn consume(&mut self, expected: Token) -> Result<&(Token, Span), String> {
         if self.check(&expected) {
             Ok(self.advance())
         } else {
-            Err(format!("Syntax Error: Expected {}, but found {}", expected, self.peek()))
+            Err(format!("Syntax Error at line {} col {}: Expected {}, but found {}", self.peek().1.line, self.peek().1.column, expected, self.peek().0))
         }
     }
 
@@ -38,30 +42,23 @@ impl Parser {
         let mut statements = Vec::new();
 
         while !self.check(&Token::EOF) {
-            match self.peek() {
-                Token::Domain => {
-                    statements.push(Statement::DomainDecl(self.parse_domain()?));
-                }
-                Token::System => {
-                    statements.push(Statement::SystemDecl(self.parse_system()?));
-                }
-                Token::Environment => {
-                    statements.push(Statement::EnvironmentDecl(self.parse_environment()?));
-                }
-                Token::Deploy => {
-                    statements.push(Statement::DeployStmt(self.parse_deploy()?));
-                }
-                _ => return Err(format!("Unexpected token at top level: {}", self.peek())),
+            match self.peek().0 {
+                Token::Domain => statements.push(self.parse_domain()?),
+                Token::System => statements.push(self.parse_system()?),
+                Token::Environment => statements.push(self.parse_environment()?),
+                Token::Deploy => statements.push(self.parse_deploy()?),
+                _ => return Err(format!("Unexpected token at top level: {}", self.peek().0)),
             }
         }
 
         Ok(Ast { statements })
     }
 
-    fn parse_domain(&mut self) -> Result<DomainDecl, String> {
-        self.consume(Token::Domain)?;
-        let name = match self.advance() {
-            Token::Identifier(id) => id.clone(),
+    fn parse_domain(&mut self) -> Result<Statement, String> {
+        let start_span = self.consume(Token::Domain)?.1.clone();
+        
+        let name = match self.advance().0.clone() {
+            Token::Identifier(id) => id,
             other => return Err(format!("Expected identifier after 'domain', found {}", other)),
         };
 
@@ -72,27 +69,26 @@ impl Parser {
         let mut transitions = Vec::new();
 
         while !self.check(&Token::RBrace) && !self.check(&Token::EOF) {
-            match self.peek() {
-                Token::State => {
-                    state = self.parse_state_block()?;
-                }
-                Token::Goal => {
-                    goals.push(self.parse_goal()?);
-                }
-                Token::Transition => {
-                    transitions.push(self.parse_transition()?);
-                }
-                other => return Err(format!("Unexpected token in domain body: {}", other)),
+            match self.peek().0 {
+                Token::State => state = self.parse_state_block()?,
+                Token::Goal => goals.push(self.parse_goal()?),
+                Token::Transition => transitions.push(self.parse_transition()?),
+                _ => return Err(format!("Unexpected token in domain body: {}", self.peek().0)),
             }
         }
 
-        self.consume(Token::RBrace)?;
+        let rb = self.consume(Token::RBrace)?;
 
-        Ok(DomainDecl {
-            name,
-            state,
-            goals,
-            transitions,
+        let span = Span {
+            offset: start_span.offset,
+            len: rb.1.offset + rb.1.len - start_span.offset,
+            line: start_span.line,
+            column: start_span.column,
+        };
+
+        Ok(Statement {
+            kind: StatementKind::DomainDecl(DomainDecl { name, state, goals, transitions }),
+            span,
         })
     }
 
@@ -102,16 +98,25 @@ impl Parser {
         let mut fields = Vec::new();
         
         while !self.check(&Token::RBrace) && !self.check(&Token::EOF) {
-            let name = match self.advance() {
-                Token::Identifier(id) => id.clone(),
+            let (name_tok, name_span) = self.advance().clone();
+            let name = match name_tok {
+                Token::Identifier(id) => id,
                 other => return Err(format!("Expected state field name, found {}", other)),
             };
             self.consume(Token::Colon)?;
-            let typ = match self.advance() {
-                Token::Identifier(id) => id.clone(),
+            let (typ_tok, typ_span) = self.advance().clone();
+            let typ = match typ_tok {
+                Token::Identifier(id) => id,
                 other => return Err(format!("Expected type for field {}, found {}", name, other)),
             };
-            fields.push(StateField { name, typ });
+            
+            let field_span = Span {
+                offset: name_span.offset,
+                len: typ_span.offset + typ_span.len - name_span.offset,
+                line: name_span.line,
+                column: name_span.column,
+            };
+            fields.push(StateField { name, typ, span: field_span });
         }
         self.consume(Token::RBrace)?;
         
@@ -119,48 +124,52 @@ impl Parser {
     }
 
     fn parse_goal(&mut self) -> Result<GoalDecl, String> {
-        self.consume(Token::Goal)?;
-        let name = match self.advance() {
-            Token::Identifier(id) => id.clone(),
+        let start_span = self.consume(Token::Goal)?.1.clone();
+        let name = match self.advance().0.clone() {
+            Token::Identifier(id) => id,
             other => return Err(format!("Expected goal name, found {}", other)),
         };
 
         self.consume(Token::LBrace)?;
         
-        // Support both "target" (original spec) and "predicate" (example usage)
         if self.check(&Token::Target) {
             self.consume(Token::Target)?;
-        } else if let Token::Identifier(ref id) = self.peek() {
+        } else if let Token::Identifier(ref id) = self.peek().0 {
             if id == "predicate" {
                 self.advance();
             } else {
-                return Err(format!("Expected 'target' or 'predicate' for goal, found {}", self.peek()));
+                return Err(format!("Expected 'target' or 'predicate' for goal, found {}", self.peek().0));
             }
         } else {
-            return Err(format!("Expected 'target' or 'predicate' for goal, found {}", self.peek()));
+            return Err(format!("Expected 'target' or 'predicate' for goal, found {}", self.peek().0));
         }
 
-        let target = self.parse_expression()?;
+        let target = self.parse_statement_or_expr()?;
 
-        // Optional Strategy Block...
         if self.check(&Token::Strategy) {
             self.consume(Token::Strategy)?;
             self.consume(Token::LBrace)?;
             while !self.check(&Token::RBrace) && !self.check(&Token::EOF) {
-                self.advance(); // consume strategy config blindly for now
+                self.advance();
             }
             self.consume(Token::RBrace)?;
         }
 
-        self.consume(Token::RBrace)?;
+        let rb = self.consume(Token::RBrace)?;
+        let span = Span {
+            offset: start_span.offset,
+            len: rb.1.offset + rb.1.len - start_span.offset,
+            line: start_span.line,
+            column: start_span.column,
+        };
 
-        Ok(GoalDecl { name, target })
+        Ok(GoalDecl { name, target, span })
     }
 
     fn parse_transition(&mut self) -> Result<TransitionDecl, String> {
-        self.consume(Token::Transition)?;
-        let name = match self.advance() {
-            Token::Identifier(id) => id.clone(),
+        let start_span = self.consume(Token::Transition)?.1.clone();
+        let name = match self.advance().0.clone() {
+            Token::Identifier(id) => id,
             other => return Err(format!("Expected transition name, found {}", other)),
         };
 
@@ -176,67 +185,94 @@ impl Parser {
             slice_step.push(self.parse_statement_or_expr()?);
         }
         self.consume(Token::RBrace)?;
-        self.consume(Token::RBrace)?;
+        let rb = self.consume(Token::RBrace)?;
+        
+        let span = Span {
+            offset: start_span.offset,
+            len: rb.1.offset + rb.1.len - start_span.offset,
+            line: start_span.line,
+            column: start_span.column,
+        };
 
-        Ok(TransitionDecl { name, slice_step })
+        Ok(TransitionDecl { name, slice_step, span })
     }
 
-    fn parse_environment(&mut self) -> Result<EnvironmentDecl, String> {
-        self.consume(Token::Environment)?;
-        let name = match self.advance() {
-            Token::Identifier(id) => id.clone(),
+    fn parse_environment(&mut self) -> Result<Statement, String> {
+        let start_span = self.consume(Token::Environment)?.1.clone();
+        let name = match self.advance().0.clone() {
+            Token::Identifier(id) => id,
             _ => return Err("Expected environment name".to_string()),
         };
         self.consume(Token::LBrace)?;
         
         let mut configurations = Vec::new();
         while !self.check(&Token::RBrace) && self.pos < self.tokens.len() {
-            let key = match self.advance() {
-                Token::Identifier(id) => id.clone(),
+            let key = match self.advance().0.clone() {
+                Token::Identifier(id) => id,
                 _ => return Err("Expected configuration key".to_string()),
             };
             self.consume(Token::Equal)?;
-            let value = self.parse_expression()?;
+            let value = self.parse_statement_or_expr()?;
             configurations.push((key, value));
         }
-        self.consume(Token::RBrace)?;
-        Ok(EnvironmentDecl { name, configurations })
+        let rb = self.consume(Token::RBrace)?;
+
+        let span = Span {
+            offset: start_span.offset,
+            len: rb.1.offset + rb.1.len - start_span.offset,
+            line: start_span.line,
+            column: start_span.column,
+        };
+
+        Ok(Statement {
+            kind: StatementKind::EnvironmentDecl(EnvironmentDecl { name, configurations }),
+            span,
+        })
     }
 
-    fn parse_deploy(&mut self) -> Result<DeployStmt, String> {
-        self.consume(Token::Deploy)?;
-        // skip "service" if present or just use identifier directly. For simplicity let's assume `deploy service <name> to <env>` or similar
-        // Based on doc: `deploy service PaymentAPI to production`
-        // Let's implement exact match:
-        let service = match self.advance() {
+    fn parse_deploy(&mut self) -> Result<Statement, String> {
+        let start_span = self.consume(Token::Deploy)?.1.clone();
+        
+        let service = match self.advance().0.clone() {
             Token::Identifier(id) if id == "service" => {
-                match self.advance() {
-                    Token::Identifier(svc_name) => svc_name.clone(),
+                match self.advance().0.clone() {
+                    Token::Identifier(svc_name) => svc_name,
                     _ => return Err("Expected service name after 'deploy service'".to_string()),
                 }
             },
-            Token::Identifier(id) => id.clone(), // fallback to direct name
+            Token::Identifier(id) => id,
             _ => return Err("Expected 'service' or identifier after 'deploy'".to_string()),
         };
 
-        // Expect 'to' keyword (we can map it as an identifier for now, or just an identifier `to`)
-        let to_kw = match self.advance() {
+        match self.advance().0.clone() {
             Token::Identifier(id) if id == "to" => id,
+            Token::To => "to".to_string(),
             _ => return Err("Expected 'to' in deploy statement".to_string()),
         };
 
-        let target_environment = match self.advance() {
-            Token::Identifier(id) => id.clone(),
+        let (target_env_tok, target_span) = self.advance().clone();
+        let target_environment = match target_env_tok {
+            Token::Identifier(id) => id,
             _ => return Err("Expected target environment name".to_string()),
         };
 
-        Ok(DeployStmt { service, target_environment })
+        let span = Span {
+            offset: start_span.offset,
+            len: target_span.offset + target_span.len - start_span.offset,
+            line: start_span.line,
+            column: start_span.column,
+        };
+
+        Ok(Statement {
+            kind: StatementKind::DeployStmt(DeployStmt { service, target_environment }),
+            span,
+        })
     }
 
-    fn parse_system(&mut self) -> Result<SystemDecl, String> {
-        self.consume(Token::System)?;
-        let name = match self.advance() {
-            Token::Identifier(id) => id.clone(),
+    fn parse_system(&mut self) -> Result<Statement, String> {
+        let start_span = self.consume(Token::System)?.1.clone();
+        let name = match self.advance().0.clone() {
+            Token::Identifier(id) => id,
             _ => return Err("Expected system name".to_string()),
         };
         self.consume(Token::LBrace)?;
@@ -245,8 +281,8 @@ impl Parser {
         while self.check(&Token::Start) {
             self.consume(Token::Start)?;
             self.consume(Token::Domain)?;
-            let d_name = match self.advance() {
-                Token::Identifier(id) => id.clone(),
+            let d_name = match self.advance().0.clone() {
+                Token::Identifier(id) => id,
                 _ => return Err("Expected domain name".to_string()),
             };
             self.consume(Token::LBrace)?;
@@ -257,162 +293,189 @@ impl Parser {
             self.consume(Token::RBrace)?;
             start_domains.push(StartDomain { name: d_name, init_state });
         }
-        self.consume(Token::RBrace)?;
-        Ok(SystemDecl { name, start_domains })
-    }
+        let rb = self.consume(Token::RBrace)?;
 
-    fn parse_statement_or_expr(&mut self) -> Result<Expr, String> {
-        // A very barebones expression/statement parser
-        match self.peek() {
-            Token::Send => {
-                self.consume(Token::Send)?;
-                self.consume(Token::LParen)?;
-                let target = match self.advance() {
-                    Token::Identifier(id) => id.clone(),
-                    Token::StringLiteral(s) => s.clone(),
-                    other => return Err(format!("Expected target string or identifier for send, got {}", other)),
-                };
-                self.consume(Token::Comma)?;
-                let message = match self.advance() {
-                    Token::Identifier(id) => id.clone(),
-                    Token::StringLiteral(s) => s.clone(),
-                    other => return Err(format!("Expected message string or identifier for send, got {}", other)),
-                };
-                self.consume(Token::RParen)?;
-                Ok(Expr::Send { target, message })
-            }
-            Token::SendHigh => {
-                self.consume(Token::SendHigh)?;
-                self.consume(Token::LParen)?;
-                let target = match self.advance() {
-                    Token::Identifier(id) => id.clone(),
-                    Token::StringLiteral(s) => s.clone(),
-                    other => return Err(format!("Expected target string or identifier for send_high, got {}", other)),
-                };
-                self.consume(Token::Comma)?;
-                let message = match self.advance() {
-                    Token::Identifier(id) => id.clone(),
-                    Token::StringLiteral(s) => s.clone(),
-                    other => return Err(format!("Expected message string or identifier for send_high, got {}", other)),
-                };
-                self.consume(Token::RParen)?;
-                Ok(Expr::SendHigh { target, message })
-            }
-            Token::While => {
-                self.consume(Token::While)?;
-                let condition = Box::new(self.parse_expression()?);
-                self.consume(Token::LBrace)?;
-                let mut body = Vec::new();
-                while !self.check(&Token::RBrace) && self.pos < self.tokens.len() {
-                    body.push(self.parse_statement_or_expr()?);
-                }
-                self.consume(Token::RBrace)?;
-                Ok(Expr::While { condition, body })
-            }
-            Token::If => {
-                self.consume(Token::If)?;
-                let condition = Box::new(self.parse_expression()?);
-                self.consume(Token::LBrace)?;
-                let mut consequence = Vec::new();
-                while !self.check(&Token::RBrace) {
-                    consequence.push(self.parse_statement_or_expr()?);
-                }
-                self.consume(Token::RBrace)?;
-                Ok(Expr::If { condition, consequence })
-            }
-            Token::Identifier(_) => {
-                let id = match self.advance() {
-                    Token::Identifier(name) => name.clone(),
-                    _ => unreachable!(),
-                };
-                
-                if self.check(&Token::Equal) {
-                    self.consume(Token::Equal)?;
-                    let value = Box::new(self.parse_expression()?);
-                    Ok(Expr::Assignment { target: id, value })
-                } else {
-                    // Let's assume it's part of a binary op or just an indent
-                    // Since it's a naive implementation, skip proper precedence parsing for now 
-                    if [Token::Plus, Token::Minus, Token::Asterisk, Token::Slash, Token::EqualEqual, Token::LessThan, Token::GreaterThan, Token::GTEqual, Token::LTEqual].contains(self.peek()) {
-                        let op = match self.advance() {
-                            Token::Plus => "+".to_string(),
-                            Token::Minus => "-".to_string(),
-                            Token::EqualEqual => "==".to_string(),
-                            Token::LessThan => "<".to_string(),
-                            Token::GreaterThan => ">".to_string(),
-                            Token::GTEqual => ">=".to_string(),
-                            Token::LTEqual => "<=".to_string(),
-                            _ => return Err("Unsupported op".to_string()),
-                        };
-                        let right = Box::new(self.parse_expression()?);
-                        Ok(Expr::BinaryOp { left: Box::new(Expr::Ident(id)), op, right })
-                    } else {
-                        Ok(Expr::Ident(id))
-                    }
-                }
-            }
-            _ => {
-                self.parse_expression()
-            }
-        }
-    }
-
-    fn parse_expression(&mut self) -> Result<Expr, String> {
-        let mut left = match self.advance() {
-            Token::IntLiteral(v) => Expr::IntLiteral(*v),
-            Token::StringLiteral(s) => Expr::StringLiteral(s.clone()),
-            Token::Identifier(id) => Expr::Ident(id.clone()),
-            Token::True => Expr::BoolLiteral(true),
-            Token::False => Expr::BoolLiteral(false),
-            other => return Err(format!("Unexpected token in expression: {}", other)),
+        let span = Span {
+            offset: start_span.offset,
+            len: rb.1.offset + rb.1.len - start_span.offset,
+            line: start_span.line,
+            column: start_span.column,
         };
 
-        if self.check(&Token::LParen) {
-            if let Expr::Ident(func_name) = &left {
+        Ok(Statement {
+            kind: StatementKind::SystemDecl(SystemDecl { name, start_domains }),
+            span,
+        })
+    }
+
+    // A Pratt-style parser for expressions
+    fn parse_statement_or_expr(&mut self) -> Result<Expr, String> {
+        self.parse_expression(0)
+    }
+
+    fn get_precedence(&self, token: &Token) -> u8 {
+        match token {
+            Token::Equal => 1,
+            Token::EqualEqual | Token::NotEqual | Token::LessThan | Token::GreaterThan | Token::LTEqual | Token::GTEqual => 2,
+            Token::Plus | Token::Minus => 3,
+            Token::Asterisk | Token::Slash | Token::Modulo => 4,
+            Token::LParen => 6, // Call operator precedence
+            _ => 0,
+        }
+    }
+
+    fn parse_expression(&mut self, precedence: u8) -> Result<Expr, String> {
+        let (token, mut start_span) = self.advance().clone();
+        
+        let mut left = match token {
+            Token::IntLiteral(v) => Expr { kind: ExprKind::IntLiteral(v), span: start_span },
+            Token::StringLiteral(s) => Expr { kind: ExprKind::StringLiteral(s), span: start_span },
+            Token::Identifier(id) => Expr { kind: ExprKind::Ident(id), span: start_span },
+            Token::True => Expr { kind: ExprKind::BoolLiteral(true), span: start_span },
+            Token::False => Expr { kind: ExprKind::BoolLiteral(false), span: start_span },
+            Token::LParen => {
+                let inner = self.parse_expression(0)?;
+                let rp = self.consume(Token::RParen)?;
+                start_span.len = rp.1.offset + rp.1.len - start_span.offset;
+                Expr { kind: inner.kind, span: start_span }
+            }
+            Token::Send => {
                 self.consume(Token::LParen)?;
+                let target = match self.advance().0.clone() {
+                    Token::Identifier(id) => id,
+                    Token::StringLiteral(s) => s,
+                    other => return Err(format!("Expected string/ident target for send, got {}", other)),
+                };
+                self.consume(Token::Comma)?;
+                let message = match self.advance().0.clone() {
+                    Token::Identifier(id) => id,
+                    Token::StringLiteral(s) => s,
+                    other => return Err(format!("Expected string/ident msg for send, got {}", other)),
+                };
+                let rp = self.consume(Token::RParen)?;
+                start_span.len = rp.1.offset + rp.1.len - start_span.offset;
+                Expr { kind: ExprKind::Send { target, message }, span: start_span }
+            }
+            Token::SendHigh => {
+                self.consume(Token::LParen)?;
+                let target = match self.advance().0.clone() {
+                    Token::Identifier(id) => id,
+                    Token::StringLiteral(s) => s,
+                    other => return Err(format!("Expected string/ident target for send_high, got {}", other)),
+                };
+                self.consume(Token::Comma)?;
+                let message = match self.advance().0.clone() {
+                    Token::Identifier(id) => id,
+                    Token::StringLiteral(s) => s,
+                    other => return Err(format!("Expected string/ident msg for send_high, got {}", other)),
+                };
+                let rp = self.consume(Token::RParen)?;
+                start_span.len = rp.1.offset + rp.1.len - start_span.offset;
+                Expr { kind: ExprKind::SendHigh { target, message }, span: start_span }
+            }
+            Token::If => {
+                let condition = Box::new(self.parse_expression(0)?);
+                self.consume(Token::LBrace)?;
+                let mut consequence = Vec::new();
+                while !self.check(&Token::RBrace) && !self.check(&Token::EOF) {
+                    consequence.push(self.parse_statement_or_expr()?);
+                }
+                let rb = self.consume(Token::RBrace)?;
+                start_span.len = rb.1.offset + rb.1.len - start_span.offset;
+                Expr { kind: ExprKind::If { condition, consequence }, span: start_span }
+            }
+            Token::While => {
+                let condition = Box::new(self.parse_expression(0)?);
+                self.consume(Token::LBrace)?;
+                let mut body = Vec::new();
+                while !self.check(&Token::RBrace) && !self.check(&Token::EOF) {
+                    body.push(self.parse_statement_or_expr()?);
+                }
+                let rb = self.consume(Token::RBrace)?;
+                start_span.len = rb.1.offset + rb.1.len - start_span.offset;
+                Expr { kind: ExprKind::While { condition, body }, span: start_span }
+            }
+            _ => return Err(format!("Unexpected token in expression: {}", token)),
+        };
+
+        while precedence < self.get_precedence(&self.peek().0) {
+            let (op_tok, _) = self.advance().clone();
+            
+            if op_tok == Token::LParen {
                 let mut arguments = Vec::new();
                 if !self.check(&Token::RParen) {
-                    arguments.push(self.parse_expression()?);
+                    arguments.push(self.parse_expression(0)?);
                     while self.check(&Token::Comma) {
                         self.consume(Token::Comma)?;
-                        arguments.push(self.parse_expression()?);
+                        arguments.push(self.parse_expression(0)?);
                     }
                 }
-                self.consume(Token::RParen)?;
-                left = Expr::Call { function: func_name.clone(), arguments };
+                let rp = self.consume(Token::RParen)?;
+                let span = Span {
+                    offset: left.span.offset,
+                    len: rp.1.offset + rp.1.len - left.span.offset,
+                    line: left.span.line,
+                    column: left.span.column,
+                };
+                let func_name = match left.kind {
+                    ExprKind::Ident(id) => id,
+                    _ => return Err("Invalid function call target".into()),
+                };
+                left = Expr {
+                    kind: ExprKind::Call { function: func_name, arguments },
+                    span,
+                };
+                continue;
             }
-        }
 
-        if [Token::Plus, Token::Minus, Token::Asterisk, Token::Slash, Token::EqualEqual, Token::LessThan, Token::GreaterThan, Token::GTEqual, Token::LTEqual, Token::Equal].contains(self.peek()) {
-            let op = match self.advance() {
-                Token::Plus => "+".to_string(),
-                Token::Minus => "-".to_string(),
-                Token::EqualEqual => "==".to_string(),
-                Token::LessThan => "<".to_string(),
-                Token::GreaterThan => ">".to_string(),
-                Token::GTEqual => ">=".to_string(),
-                Token::LTEqual => "<=".to_string(),
-                Token::Equal => "=".to_string(),
-                _ => unreachable!(),
-            };
-            let right = Box::new(self.parse_expression()?);
+            let op_str = match op_tok {
+                Token::Plus => "+",
+                Token::Minus => "-",
+                Token::Asterisk => "*",
+                Token::Slash => "/",
+                Token::Modulo => "%",
+                Token::EqualEqual => "==",
+                Token::LessThan => "<",
+                Token::GreaterThan => ">",
+                Token::GTEqual => ">=",
+                Token::LTEqual => "<=",
+                Token::Equal => "=",
+                _ => return Err(format!("Unsupported binary operator: {:?}", op_tok)),
+            }.to_string();
+
+            let next_prec = self.get_precedence(&op_tok);
             
-            if op == "=" {
-                if let Expr::Ident(id) = left {
-                    return Ok(Expr::Assignment { target: id, value: right });
+            // For right associative operations like '=', we would not add 1:
+            let right_prec = if op_tok == Token::Equal { next_prec - 1 } else { next_prec };
+            
+            let right = self.parse_expression(right_prec)?;
+            
+            let span = Span {
+                offset: left.span.offset,
+                len: right.span.offset + right.span.len - left.span.offset,
+                line: left.span.line,
+                column: left.span.column,
+            };
+
+            if op_tok == Token::Equal {
+                if let ExprKind::Ident(id) = left.kind {
+                    left = Expr { kind: ExprKind::Assignment { target: id, value: Box::new(right) }, span };
                 } else {
                     return Err("Invalid assignment target".to_string());
                 }
+            } else {
+                left = Expr {
+                    kind: ExprKind::BinaryOp { left: Box::new(left), op: op_str, right: Box::new(right) },
+                    span,
+                };
             }
-            
-            return Ok(Expr::BinaryOp { left: Box::new(left), op, right });
         }
-
+        
         Ok(left)
     }
 }
 
-pub fn parse(input: Vec<Token>) -> Result<Ast, String> {
+pub fn parse(input: Vec<(Token, Span)>) -> Result<Ast, String> {
     let mut parser = Parser::new(input);
     parser.parse()
 }
@@ -451,7 +514,7 @@ mod tests {
         let ast = result.unwrap();
         assert_eq!(ast.statements.len(), 1);
         
-        if let Statement::DomainDecl(domain) = &ast.statements[0] {
+        if let StatementKind::DomainDecl(domain) = &ast.statements[0].kind {
             assert_eq!(domain.name, "WebServer");
             assert_eq!(domain.state.len(), 2);
             assert_eq!(domain.state[0].name, "status");
@@ -466,5 +529,29 @@ mod tests {
             panic!("Expected DomainDecl statement");
         }
     }
+    
+    #[test]
+    fn test_precedence() {
+        let input = "a + b * c == d";
+        let mut tokens = lex(input);
+        tokens.pop(); // remove EOF
+        let mut parser = Parser::new(tokens);
+        let expr = parser.parse_expression(0).unwrap();
+        // == is root
+        if let ExprKind::BinaryOp { left, op, right } = expr.kind {
+            assert_eq!(op, "==");
+            if let ExprKind::Ident(r_name) = right.kind {
+                assert_eq!(r_name, "d");
+            } else { panic!("Right is not 'd'"); }
+            
+            if let ExprKind::BinaryOp { left: ll, op: mop, right: rr } = left.kind {
+                assert_eq!(mop, "+");
+                if let ExprKind::Ident(lname) = ll.kind { assert_eq!(lname, "a"); }
+                
+                if let ExprKind::BinaryOp { op: mmop, .. } = rr.kind {
+                    assert_eq!(mmop, "*"); // b * c tight binding
+                } else { panic!("Expected * operation"); }
+            } else { panic!("Expected + operation"); }
+        } else { panic!("Expected == operation"); }
+    }
 }
-

@@ -1,5 +1,8 @@
 use std::collections::HashMap;
-use crate::ast::{Ast, Statement, Expr};
+use crate::ast::{Ast, StatementKind, Expr, ExprKind};
+use miette::{Diagnostic, SourceSpan};
+use thiserror::Error;
+use crate::lexer::Span;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum VedType {
@@ -9,9 +12,17 @@ pub enum VedType {
     Unknown(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error, Diagnostic)]
+#[error("{message}")]
+#[diagnostic(code(ved::semantic))]
 pub struct SemanticError {
     pub message: String,
+    #[label("here")]
+    pub span: SourceSpan,
+}
+
+fn to_span(span: Span) -> SourceSpan {
+    (span.offset, span.len).into()
 }
 
 pub struct SemanticValidator {
@@ -35,8 +46,8 @@ impl SemanticValidator {
 
         // Pass 1: Catalog all domain states and environments
         for stmt in &ast.statements {
-            match stmt {
-                Statement::DomainDecl(domain) => {
+            match &stmt.kind {
+                StatementKind::DomainDecl(domain) => {
                     let mut state_fields = HashMap::new();
                     for field in &domain.state {
                         let v_type = match field.typ.as_str() {
@@ -49,12 +60,14 @@ impl SemanticValidator {
                         if let VedType::Unknown(ref t) = v_type {
                             errors.push(SemanticError {
                                 message: format!("Domain '{}': Unknown type '{}' for field '{}'", domain.name, t, field.name),
+                                span: to_span(field.span),
                             });
                         }
 
                         if state_fields.contains_key(&field.name) {
                             errors.push(SemanticError {
                                 message: format!("Domain '{}': Duplicate state field '{}'", domain.name, field.name),
+                                span: to_span(field.span),
                             });
                         } else {
                             state_fields.insert(field.name.clone(), v_type);        
@@ -63,7 +76,7 @@ impl SemanticValidator {
 
                     self.domains.insert(domain.name.clone(), DomainInfo { state_fields });
                 }
-                Statement::EnvironmentDecl(env) => {
+                StatementKind::EnvironmentDecl(env) => {
                     declared_environments.push(env.name.clone());
                 }
                 _ => {}
@@ -72,10 +85,11 @@ impl SemanticValidator {
 
         // Pass 2: Validate Deployments (Governance Rule E001)
         for stmt in &ast.statements {
-            if let Statement::DeployStmt(deploy) = stmt {
+            if let StatementKind::DeployStmt(deploy) = &stmt.kind {
                 if !self.domains.contains_key(&deploy.service) { // Assuming service matches domain name for now
                     errors.push(SemanticError {
                         message: format!("E002: Unknown service '{}' in deployment statement.", deploy.service),
+                        span: to_span(stmt.span),
                     });
                 }
                 if !declared_environments.contains(&deploy.target_environment) {
@@ -83,6 +97,7 @@ impl SemanticValidator {
                         message: format!(
                             "E001: Execution authority violation\nManual context mutation detected.\n\nRequired: environment-bound capability\nFound: undeclared environment '{}'\n\nResolution:\nBind operation to a declared environment block.", deploy.target_environment
                         ),
+                        span: to_span(stmt.span),
                     });
                 }
             }
@@ -90,7 +105,7 @@ impl SemanticValidator {
 
         // Pass 3: Validate Goals and Transitions against State
         for stmt in &ast.statements {
-            if let Statement::DomainDecl(domain) = stmt {
+            if let StatementKind::DomainDecl(domain) = &stmt.kind {
                 let domain_info = self.domains.get(&domain.name).unwrap();      
 
                 // Validate Goals (Strictly Pure)
@@ -115,41 +130,45 @@ impl SemanticValidator {
     }
 
     fn validate_expr(&self, domain_name: &str, expr: &Expr, domain_info: &DomainInfo, is_pure_context: bool, errors: &mut Vec<SemanticError>) {
-        match expr {
-            Expr::Ident(name) => {
+        match &expr.kind {
+            ExprKind::Ident(name) => {
                 if !domain_info.state_fields.contains_key(name) {
                     errors.push(SemanticError {
                         message: format!("Domain '{}': Reference to undefined state variable '{}'", domain_name, name),
+                        span: to_span(expr.span),
                     });
                 }
             }
-            Expr::Assignment { target, value } => {
+            ExprKind::Assignment { target, value } => {
                 if is_pure_context {
                     errors.push(SemanticError {
                         message: format!("Domain '{}': Illegal mutation of '{}'. Goals must be strictly read-only and side-effect free.", domain_name, target),
+                        span: to_span(expr.span),
                     });
                 }
                 if !domain_info.state_fields.contains_key(target) {
                     errors.push(SemanticError {
                         message: format!("Domain '{}': Cannot assign to undefined state variable '{}'", domain_name, target),
+                        span: to_span(expr.span),
                     });
                 }
                 self.validate_expr(domain_name, value, domain_info, is_pure_context, errors);    
             }
-            Expr::BinaryOp { left, right, .. } => {
+            ExprKind::BinaryOp { left, right, .. } => {
                 self.validate_expr(domain_name, left, domain_info, is_pure_context, errors);     
                 self.validate_expr(domain_name, right, domain_info, is_pure_context, errors);    
             }
-            Expr::If { condition, consequence } => {
+            ExprKind::If { condition, consequence } => {
                 self.validate_expr(domain_name, condition, domain_info, is_pure_context, errors);
                 for step in consequence {
                     self.validate_expr(domain_name, step, domain_info, is_pure_context, errors);
                 }
             }
-            Expr::While { condition, body } => {
-                if let Expr::BoolLiteral(true) = **condition {
+            ExprKind::While { condition, body } => {
+                if let ExprKind::BoolLiteral(true) = condition.kind {
                     errors.push(SemanticError {
                         message: format!("Domain '{}': Unbounded `while(true)` loops are forbidden to preserve slice computation bounds.", domain_name),
+                        span: to_span(expr.span),
                     });
                 }
                 
@@ -158,33 +177,36 @@ impl SemanticValidator {
                     self.validate_expr(domain_name, step, domain_info, is_pure_context, errors);
                 }
             }
-            Expr::Send { target: _, message: _ } => {
+            ExprKind::Send { target: _, message: _ } => {
                 if is_pure_context {
                     errors.push(SemanticError {
                         message: format!("Domain '{}': Illegal effect 'send'. Goals must be strictly side-effect free.", domain_name),
+                        span: to_span(expr.span),
                     });
                 }
             }
-            Expr::SendHigh { target: _, message: _ } => {
+            ExprKind::SendHigh { target: _, message: _ } => {
                 if is_pure_context {
                     errors.push(SemanticError {
                         message: format!("Domain '{}': Illegal effect 'send_high'. Goals must be strictly side-effect free.", domain_name),
+                        span: to_span(expr.span),
                     });
                 }
             }
-            Expr::Call { function, arguments } => {
+            ExprKind::Call { function, arguments } => {
                 if function == "shell" {
                     errors.push(SemanticError {
                         message: format!(
                             "E001: Execution authority violation\nManual context mutation detected: `shell(...)` is forbidden.\n\nRequired: environment-bound capability\nFound: local session context\n\nResolution:\nBind operation to declared environment block."
                         ),
+                        span: to_span(expr.span),
                     });
                 }
                 for arg in arguments {
                     self.validate_expr(domain_name, arg, domain_info, is_pure_context, errors);
                 }
             }
-            Expr::IntLiteral(_) | Expr::StringLiteral(_) | Expr::BoolLiteral(_) => {
+            ExprKind::IntLiteral(_) | ExprKind::StringLiteral(_) | ExprKind::BoolLiteral(_) => {
                 // Literals are inherently valid.
             }
         }

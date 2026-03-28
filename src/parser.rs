@@ -45,6 +45,12 @@ impl Parser {
                 Token::System => {
                     statements.push(Statement::SystemDecl(self.parse_system()?));
                 }
+                Token::Environment => {
+                    statements.push(Statement::EnvironmentDecl(self.parse_environment()?));
+                }
+                Token::Deploy => {
+                    statements.push(Statement::DeployStmt(self.parse_deploy()?));
+                }
                 _ => return Err(format!("Unexpected token at top level: {}", self.peek())),
             }
         }
@@ -175,6 +181,58 @@ impl Parser {
         Ok(TransitionDecl { name, slice_step })
     }
 
+    fn parse_environment(&mut self) -> Result<EnvironmentDecl, String> {
+        self.consume(Token::Environment)?;
+        let name = match self.advance() {
+            Token::Identifier(id) => id.clone(),
+            _ => return Err("Expected environment name".to_string()),
+        };
+        self.consume(Token::LBrace)?;
+        
+        let mut configurations = Vec::new();
+        while !self.check(&Token::RBrace) && self.pos < self.tokens.len() {
+            let key = match self.advance() {
+                Token::Identifier(id) => id.clone(),
+                _ => return Err("Expected configuration key".to_string()),
+            };
+            self.consume(Token::Equal)?;
+            let value = self.parse_expression()?;
+            configurations.push((key, value));
+        }
+        self.consume(Token::RBrace)?;
+        Ok(EnvironmentDecl { name, configurations })
+    }
+
+    fn parse_deploy(&mut self) -> Result<DeployStmt, String> {
+        self.consume(Token::Deploy)?;
+        // skip "service" if present or just use identifier directly. For simplicity let's assume `deploy service <name> to <env>` or similar
+        // Based on doc: `deploy service PaymentAPI to production`
+        // Let's implement exact match:
+        let service = match self.advance() {
+            Token::Identifier(id) if id == "service" => {
+                match self.advance() {
+                    Token::Identifier(svc_name) => svc_name.clone(),
+                    _ => return Err("Expected service name after 'deploy service'".to_string()),
+                }
+            },
+            Token::Identifier(id) => id.clone(), // fallback to direct name
+            _ => return Err("Expected 'service' or identifier after 'deploy'".to_string()),
+        };
+
+        // Expect 'to' keyword (we can map it as an identifier for now, or just an identifier `to`)
+        let to_kw = match self.advance() {
+            Token::Identifier(id) if id == "to" => id,
+            _ => return Err("Expected 'to' in deploy statement".to_string()),
+        };
+
+        let target_environment = match self.advance() {
+            Token::Identifier(id) => id.clone(),
+            _ => return Err("Expected target environment name".to_string()),
+        };
+
+        Ok(DeployStmt { service, target_environment })
+    }
+
     fn parse_system(&mut self) -> Result<SystemDecl, String> {
         self.consume(Token::System)?;
         let name = match self.advance() {
@@ -300,7 +358,7 @@ impl Parser {
     }
 
     fn parse_expression(&mut self) -> Result<Expr, String> {
-        let left = match self.advance() {
+        let mut left = match self.advance() {
             Token::IntLiteral(v) => Expr::IntLiteral(*v),
             Token::StringLiteral(s) => Expr::StringLiteral(s.clone()),
             Token::Identifier(id) => Expr::Ident(id.clone()),
@@ -308,6 +366,22 @@ impl Parser {
             Token::False => Expr::BoolLiteral(false),
             other => return Err(format!("Unexpected token in expression: {}", other)),
         };
+
+        if self.check(&Token::LParen) {
+            if let Expr::Ident(func_name) = &left {
+                self.consume(Token::LParen)?;
+                let mut arguments = Vec::new();
+                if !self.check(&Token::RParen) {
+                    arguments.push(self.parse_expression()?);
+                    while self.check(&Token::Comma) {
+                        self.consume(Token::Comma)?;
+                        arguments.push(self.parse_expression()?);
+                    }
+                }
+                self.consume(Token::RParen)?;
+                left = Expr::Call { function: func_name.clone(), arguments };
+            }
+        }
 
         if [Token::Plus, Token::Minus, Token::Asterisk, Token::Slash, Token::EqualEqual, Token::LessThan, Token::GreaterThan, Token::GTEqual, Token::LTEqual, Token::Equal].contains(self.peek()) {
             let op = match self.advance() {

@@ -1,6 +1,9 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     // System Structure Keywords
+    Environment,
+    Deploy,
+    To,
     System,
     Module,
     Domain,
@@ -85,6 +88,8 @@ impl std::fmt::Display for Token {
             Token::Goal => write!(f, "'goal'"),
             Token::Reconcile => write!(f, "'reconcile'"),
             Token::Migration => write!(f, "'migration'"),
+            Token::Environment => write!(f, "'environment'"),
+            Token::Deploy => write!(f, "'deploy'"),
             Token::Start => write!(f, "'start'"),
             Token::Step => write!(f, "'step'"),
             Token::Slice => write!(f, "'slice'"),
@@ -131,6 +136,7 @@ impl std::fmt::Display for Token {
             Token::Identifier(s) => write!(f, "identifier '{}'", s),
             Token::IntLiteral(n) => write!(f, "integer {}", n),
             Token::StringLiteral(s) => write!(f, "string \"{}\"", s),
+            Token::To => write!(f, "'to'"),
             Token::EOF => write!(f, "end of file"),
             Token::Unknown(c) => write!(f, "unknown character '{}'", c),
 
@@ -179,6 +185,10 @@ impl<'a> Lexer<'a> {
         }
         let text = &self.input[start..self.position];
         match text {
+            "environment" => Token::Environment,
+            "deploy" => Token::Deploy,
+            "to" => Token::To,
+            "shell" => Token::Identifier("shell".to_string()),
             "system" => Token::System,
             "module" => Token::Module,
             "domain" => Token::Domain,

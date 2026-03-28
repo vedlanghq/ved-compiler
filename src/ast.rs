@@ -2,6 +2,20 @@
 pub enum Statement {
     DomainDecl(DomainDecl),
     SystemDecl(SystemDecl),
+    EnvironmentDecl(EnvironmentDecl),
+    DeployStmt(DeployStmt),
+}
+
+#[derive(Debug, Clone)]
+pub struct DeployStmt {
+    pub service: String,
+    pub target_environment: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnvironmentDecl {
+    pub name: String,
+    pub configurations: Vec<(String, Expr)>,
 }
 
 #[derive(Debug, Clone)]
@@ -57,6 +71,10 @@ pub enum Expr {
     IntLiteral(i64),
     StringLiteral(String),
     BoolLiteral(bool),
+    Call {
+        function: String,
+        arguments: Vec<Expr>,
+    },
     Send {
         target: String,
         message: String,

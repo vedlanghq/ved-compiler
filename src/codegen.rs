@@ -201,6 +201,10 @@ impl<'a> FuncGen<'a> {
 
                 cond_reg
             }
+            Expr::Call { function: _, arguments: _ } => {
+                // Not supported in bytecode generation yet, returning dummy register
+                0
+            }
             Expr::Send { target, message } => {
                 let target_const_idx = self.add_constant(Constant::String(target.clone()));
                 let msg_const_idx = self.add_constant(Constant::String(message.clone()));

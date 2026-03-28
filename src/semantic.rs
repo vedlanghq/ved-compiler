@@ -31,39 +31,64 @@ impl SemanticValidator {
 
     pub fn validate(&mut self, ast: &Ast) -> Result<(), Vec<SemanticError>> {   
         let mut errors = Vec::new();
+        let mut declared_environments = Vec::new();
 
-        // Pass 1: Catalog all domain states
+        // Pass 1: Catalog all domain states and environments
         for stmt in &ast.statements {
-            if let Statement::DomainDecl(domain) = stmt {
-                let mut state_fields = HashMap::new();
-                for field in &domain.state {
-                    let v_type = match field.typ.as_str() {
-                        "int" => VedType::Int,
-                        "string" => VedType::String,
-                        "bool" => VedType::Bool,
-                        other => VedType::Unknown(other.to_string()),
-                    };
+            match stmt {
+                Statement::DomainDecl(domain) => {
+                    let mut state_fields = HashMap::new();
+                    for field in &domain.state {
+                        let v_type = match field.typ.as_str() {
+                            "int" => VedType::Int,
+                            "string" => VedType::String,
+                            "bool" => VedType::Bool,
+                            other => VedType::Unknown(other.to_string()),        
+                        };
 
-                    if let VedType::Unknown(ref t) = v_type {
-                        errors.push(SemanticError {
-                            message: format!("Domain '{}': Unknown type '{}' for field '{}'", domain.name, t, field.name),
-                        });
+                        if let VedType::Unknown(ref t) = v_type {
+                            errors.push(SemanticError {
+                                message: format!("Domain '{}': Unknown type '{}' for field '{}'", domain.name, t, field.name),
+                            });
+                        }
+
+                        if state_fields.contains_key(&field.name) {
+                            errors.push(SemanticError {
+                                message: format!("Domain '{}': Duplicate state field '{}'", domain.name, field.name),
+                            });
+                        } else {
+                            state_fields.insert(field.name.clone(), v_type);        
+                        }
                     }
 
-                    if state_fields.contains_key(&field.name) {
-                        errors.push(SemanticError {
-                            message: format!("Domain '{}': Duplicate state field '{}'", domain.name, field.name),
-                        });
-                    } else {
-                        state_fields.insert(field.name.clone(), v_type);        
-                    }
+                    self.domains.insert(domain.name.clone(), DomainInfo { state_fields });
                 }
-
-                self.domains.insert(domain.name.clone(), DomainInfo { state_fields });
+                Statement::EnvironmentDecl(env) => {
+                    declared_environments.push(env.name.clone());
+                }
+                _ => {}
             }
         }
 
-        // Pass 2: Validate Goals and Transitions against State
+        // Pass 2: Validate Deployments (Governance Rule E001)
+        for stmt in &ast.statements {
+            if let Statement::DeployStmt(deploy) = stmt {
+                if !self.domains.contains_key(&deploy.service) { // Assuming service matches domain name for now
+                    errors.push(SemanticError {
+                        message: format!("E002: Unknown service '{}' in deployment statement.", deploy.service),
+                    });
+                }
+                if !declared_environments.contains(&deploy.target_environment) {
+                    errors.push(SemanticError {
+                        message: format!(
+                            "E001: Execution authority violation\nManual context mutation detected.\n\nRequired: environment-bound capability\nFound: undeclared environment '{}'\n\nResolution:\nBind operation to a declared environment block.", deploy.target_environment
+                        ),
+                    });
+                }
+            }
+        }
+
+        // Pass 3: Validate Goals and Transitions against State
         for stmt in &ast.statements {
             if let Statement::DomainDecl(domain) = stmt {
                 let domain_info = self.domains.get(&domain.name).unwrap();      
@@ -145,6 +170,18 @@ impl SemanticValidator {
                     errors.push(SemanticError {
                         message: format!("Domain '{}': Illegal effect 'send_high'. Goals must be strictly side-effect free.", domain_name),
                     });
+                }
+            }
+            Expr::Call { function, arguments } => {
+                if function == "shell" {
+                    errors.push(SemanticError {
+                        message: format!(
+                            "E001: Execution authority violation\nManual context mutation detected: `shell(...)` is forbidden.\n\nRequired: environment-bound capability\nFound: local session context\n\nResolution:\nBind operation to declared environment block."
+                        ),
+                    });
+                }
+                for arg in arguments {
+                    self.validate_expr(domain_name, arg, domain_info, is_pure_context, errors);
                 }
             }
             Expr::IntLiteral(_) | Expr::StringLiteral(_) | Expr::BoolLiteral(_) => {

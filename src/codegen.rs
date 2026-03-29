@@ -152,11 +152,15 @@ impl<'a> FuncGen<'a> {
                 let opcode = match op.as_str() {
                     "+" => OpCode::AddInt { r1, r2, dest },
                     "-" => OpCode::SubInt { r1, r2, dest },
+                    "*" => OpCode::MulInt { r1, r2, dest },
+                    "/" => OpCode::DivInt { r1, r2, dest },
                     "==" => OpCode::CmpEq { r1, r2, dest },
                     "<" => OpCode::CmpLt { r1, r2, dest },
                     ">" => OpCode::CmpGt { r1, r2, dest },
                     ">=" => OpCode::CmpGte { r1, r2, dest },
                     "<=" => OpCode::CmpLte { r1, r2, dest },
+                    "&&" => OpCode::AndBool { r1, r2, dest },
+                    "||" => OpCode::OrBool { r1, r2, dest },
                     _ => unimplemented!("unsupported binary op: {}", op),
                 };
                 self.emit(opcode);

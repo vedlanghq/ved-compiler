@@ -54,6 +54,7 @@ impl CodeGenerator {
             cg.emit(OpCode::HaltSlice);
             goals.push(GoalBytecode {
                 name: goal.name.clone(),
+                recovery_transitions: goal.strategy.clone(),
                 constants: cg.constants,
                 instructions: cg.instructions,
             });

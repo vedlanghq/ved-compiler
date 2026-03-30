@@ -146,11 +146,18 @@ impl Parser {
 
         let target = self.parse_statement_or_expr()?;
 
+        let mut strategy = Vec::new();
+
         if self.check(&Token::Strategy) {
             self.consume(Token::Strategy)?;
             self.consume(Token::LBrace)?;
             while !self.check(&Token::RBrace) && !self.check(&Token::EOF) {
-                self.advance();
+                let tok = self.advance().0.clone();
+                if let Token::Identifier(id) = tok {
+                    strategy.push(id);
+                } else if tok != Token::Comma {
+                    // Ignore commas or gracefully fail on unexpected tokens
+                }
             }
             self.consume(Token::RBrace)?;
         }
@@ -163,7 +170,7 @@ impl Parser {
             column: start_span.column,
         };
 
-        Ok(GoalDecl { name, target, span })
+        Ok(GoalDecl { name, target, strategy, span })
     }
 
     fn parse_transition(&mut self) -> Result<TransitionDecl, String> {

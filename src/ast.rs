@@ -45,6 +45,7 @@ pub struct StateField {
 pub struct GoalDecl {
     pub name: String,
     pub target: Expr,
+    pub strategy: Vec<String>,
     pub span: Span,
 }
 

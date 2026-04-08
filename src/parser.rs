@@ -1,5 +1,16 @@
 use crate::lexer::{Token, Span};
 use crate::ast::*;
+use miette::{Diagnostic, SourceSpan};
+use thiserror::Error;
+
+#[derive(Debug, Error, Diagnostic)]
+#[error("{message}")]
+#[diagnostic(code(ved::syntax))]
+pub struct ParseError {
+    pub message: String,
+    #[label("expected token here")]
+    pub span: SourceSpan,
+}
 
 pub struct Parser {
     tokens: Vec<(Token, Span)>,
@@ -30,15 +41,23 @@ impl Parser {
         &self.peek().0 == expected
     }
 
-    fn consume(&mut self, expected: Token) -> Result<&(Token, Span), String> {
+    fn consume(&mut self, expected: Token) -> Result<&(Token, Span), ParseError> {
         if self.check(&expected) {
             Ok(self.advance())
         } else {
-            Err(format!("Syntax Error at line {} col {}: Expected {}, but found {}", self.peek().1.line, self.peek().1.column, expected, self.peek().0))
+            self.err(format!("Syntax Error at line {} col {}: Expected {}, but found {}", self.peek().1.line, self.peek().1.column, expected, self.peek().0))
         }
     }
 
-    pub fn parse(&mut self) -> Result<Ast, String> {
+        fn err<T>(&self, msg: String) -> Result<T, ParseError> {
+        let span = self.peek().1;
+        Err(ParseError {
+            message: msg,
+            span: (span.offset, span.len).into(),
+        })
+    }
+
+    pub fn parse(&mut self) -> Result<Ast, ParseError> {
         let mut statements = Vec::new();
 
         while !self.check(&Token::EOF) {
@@ -47,19 +66,19 @@ impl Parser {
                 Token::System => statements.push(self.parse_system()?),
                 Token::Environment => statements.push(self.parse_environment()?),
                 Token::Deploy => statements.push(self.parse_deploy()?),
-                _ => return Err(format!("Unexpected token at top level: {}", self.peek().0)),
+                _ => return self.err(format!("Unexpected token at top level: {}", self.peek().0)),
             }
         }
 
         Ok(Ast { statements })
     }
 
-    fn parse_domain(&mut self) -> Result<Statement, String> {
+    fn parse_domain(&mut self) -> Result<Statement, ParseError> {
         let start_span = self.consume(Token::Domain)?.1.clone();
         
         let name = match self.advance().0.clone() {
             Token::Identifier(id) => id,
-            other => return Err(format!("Expected identifier after 'domain', found {}", other)),
+            other => return self.err(format!("Expected identifier after 'domain', found {}", other)),
         };
 
         self.consume(Token::LBrace)?;
@@ -73,7 +92,7 @@ impl Parser {
                 Token::State => state = self.parse_state_block()?,
                 Token::Goal => goals.push(self.parse_goal()?),
                 Token::Transition => transitions.push(self.parse_transition()?),
-                _ => return Err(format!("Unexpected token in domain body: {}", self.peek().0)),
+                _ => return self.err(format!("Unexpected token in domain body: {}", self.peek().0)),
             }
         }
 
@@ -92,7 +111,7 @@ impl Parser {
         })
     }
 
-    fn parse_state_block(&mut self) -> Result<Vec<StateField>, String> {
+    fn parse_state_block(&mut self) -> Result<Vec<StateField>, ParseError> {
         self.consume(Token::State)?;
         self.consume(Token::LBrace)?;
         let mut fields = Vec::new();
@@ -101,13 +120,13 @@ impl Parser {
             let (name_tok, name_span) = self.advance().clone();
             let name = match name_tok {
                 Token::Identifier(id) => id,
-                other => return Err(format!("Expected state field name, found {}", other)),
+                other => return self.err(format!("Expected state field name, found {}", other)),
             };
             self.consume(Token::Colon)?;
             let (typ_tok, typ_span) = self.advance().clone();
             let typ = match typ_tok {
                 Token::Identifier(id) => id,
-                other => return Err(format!("Expected type for field {}, found {}", name, other)),
+                other => return self.err(format!("Expected type for field {}, found {}", name, other)),
             };
             
             let field_span = Span {
@@ -123,11 +142,11 @@ impl Parser {
         Ok(fields)
     }
 
-    fn parse_goal(&mut self) -> Result<GoalDecl, String> {
+    fn parse_goal(&mut self) -> Result<GoalDecl, ParseError> {
         let start_span = self.consume(Token::Goal)?.1.clone();
         let name = match self.advance().0.clone() {
             Token::Identifier(id) => id,
-            other => return Err(format!("Expected goal name, found {}", other)),
+            other => return self.err(format!("Expected goal name, found {}", other)),
         };
 
         self.consume(Token::LBrace)?;
@@ -138,10 +157,10 @@ impl Parser {
             if id == "predicate" {
                 self.advance();
             } else {
-                return Err(format!("Expected 'target' or 'predicate' for goal, found {}", self.peek().0));
+                return self.err(format!("Expected 'target' or 'predicate' for goal, found {}", self.peek().0));
             }
         } else {
-            return Err(format!("Expected 'target' or 'predicate' for goal, found {}", self.peek().0));
+            return self.err(format!("Expected 'target' or 'predicate' for goal, found {}", self.peek().0));
         }
 
         let target = self.parse_statement_or_expr()?;
@@ -173,11 +192,11 @@ impl Parser {
         Ok(GoalDecl { name, target, strategy, span })
     }
 
-    fn parse_transition(&mut self) -> Result<TransitionDecl, String> {
+    fn parse_transition(&mut self) -> Result<TransitionDecl, ParseError> {
         let start_span = self.consume(Token::Transition)?.1.clone();
         let name = match self.advance().0.clone() {
             Token::Identifier(id) => id,
-            other => return Err(format!("Expected transition name, found {}", other)),
+            other => return self.err(format!("Expected transition name, found {}", other)),
         };
 
         self.consume(Token::LBrace)?;
@@ -204,11 +223,11 @@ impl Parser {
         Ok(TransitionDecl { name, slice_step, span })
     }
 
-    fn parse_environment(&mut self) -> Result<Statement, String> {
+    fn parse_environment(&mut self) -> Result<Statement, ParseError> {
         let start_span = self.consume(Token::Environment)?.1.clone();
         let name = match self.advance().0.clone() {
             Token::Identifier(id) => id,
-            _ => return Err("Expected environment name".to_string()),
+            _ => return self.err("Expected environment name".to_string()),
         };
         self.consume(Token::LBrace)?;
         
@@ -216,7 +235,7 @@ impl Parser {
         while !self.check(&Token::RBrace) && self.pos < self.tokens.len() {
             let key = match self.advance().0.clone() {
                 Token::Identifier(id) => id,
-                _ => return Err("Expected configuration key".to_string()),
+                _ => return self.err("Expected configuration key".to_string()),
             };
             self.consume(Token::Equal)?;
             let value = self.parse_statement_or_expr()?;
@@ -237,30 +256,30 @@ impl Parser {
         })
     }
 
-    fn parse_deploy(&mut self) -> Result<Statement, String> {
+    fn parse_deploy(&mut self) -> Result<Statement, ParseError> {
         let start_span = self.consume(Token::Deploy)?.1.clone();
         
         let service = match self.advance().0.clone() {
             Token::Identifier(id) if id == "service" => {
                 match self.advance().0.clone() {
                     Token::Identifier(svc_name) => svc_name,
-                    _ => return Err("Expected service name after 'deploy service'".to_string()),
+                    _ => return self.err("Expected service name after 'deploy service'".to_string()),
                 }
             },
             Token::Identifier(id) => id,
-            _ => return Err("Expected 'service' or identifier after 'deploy'".to_string()),
+            _ => return self.err("Expected 'service' or identifier after 'deploy'".to_string()),
         };
 
         match self.advance().0.clone() {
             Token::Identifier(id) if id == "to" => id,
             Token::To => "to".to_string(),
-            _ => return Err("Expected 'to' in deploy statement".to_string()),
+            _ => return self.err("Expected 'to' in deploy statement".to_string()),
         };
 
         let (target_env_tok, target_span) = self.advance().clone();
         let target_environment = match target_env_tok {
             Token::Identifier(id) => id,
-            _ => return Err("Expected target environment name".to_string()),
+            _ => return self.err("Expected target environment name".to_string()),
         };
 
         let span = Span {
@@ -276,11 +295,11 @@ impl Parser {
         })
     }
 
-    fn parse_system(&mut self) -> Result<Statement, String> {
+    fn parse_system(&mut self) -> Result<Statement, ParseError> {
         let start_span = self.consume(Token::System)?.1.clone();
         let name = match self.advance().0.clone() {
             Token::Identifier(id) => id,
-            _ => return Err("Expected system name".to_string()),
+            _ => return self.err("Expected system name".to_string()),
         };
         self.consume(Token::LBrace)?;
         
@@ -290,7 +309,7 @@ impl Parser {
             self.consume(Token::Domain)?;
             let d_name = match self.advance().0.clone() {
                 Token::Identifier(id) => id,
-                _ => return Err("Expected domain name".to_string()),
+                _ => return self.err("Expected domain name".to_string()),
             };
             self.consume(Token::LBrace)?;
             let mut init_state = Vec::new();
@@ -316,7 +335,7 @@ impl Parser {
     }
 
     // A Pratt-style parser for expressions
-    fn parse_statement_or_expr(&mut self) -> Result<Expr, String> {
+    fn parse_statement_or_expr(&mut self) -> Result<Expr, ParseError> {
         self.parse_expression(0)
     }
 
@@ -331,7 +350,7 @@ impl Parser {
         }
     }
 
-    fn parse_expression(&mut self, precedence: u8) -> Result<Expr, String> {
+    fn parse_expression(&mut self, precedence: u8) -> Result<Expr, ParseError> {
         let (token, mut start_span) = self.advance().clone();
         
         let mut left = match token {
@@ -351,13 +370,13 @@ impl Parser {
                 let target = match self.advance().0.clone() {
                     Token::Identifier(id) => id,
                     Token::StringLiteral(s) => s,
-                    other => return Err(format!("Expected string/ident target for send, got {}", other)),
+                    other => return self.err(format!("Expected string/ident target for send, got {}", other)),
                 };
                 self.consume(Token::Comma)?;
                 let message = match self.advance().0.clone() {
                     Token::Identifier(id) => id,
                     Token::StringLiteral(s) => s,
-                    other => return Err(format!("Expected string/ident msg for send, got {}", other)),
+                    other => return self.err(format!("Expected string/ident msg for send, got {}", other)),
                 };
                 let rp = self.consume(Token::RParen)?;
                 start_span.len = rp.1.offset + rp.1.len - start_span.offset;
@@ -368,13 +387,13 @@ impl Parser {
                 let target = match self.advance().0.clone() {
                     Token::Identifier(id) => id,
                     Token::StringLiteral(s) => s,
-                    other => return Err(format!("Expected string/ident target for send_high, got {}", other)),
+                    other => return self.err(format!("Expected string/ident target for send_high, got {}", other)),
                 };
                 self.consume(Token::Comma)?;
                 let message = match self.advance().0.clone() {
                     Token::Identifier(id) => id,
                     Token::StringLiteral(s) => s,
-                    other => return Err(format!("Expected string/ident msg for send_high, got {}", other)),
+                    other => return self.err(format!("Expected string/ident msg for send_high, got {}", other)),
                 };
                 let rp = self.consume(Token::RParen)?;
                 start_span.len = rp.1.offset + rp.1.len - start_span.offset;
@@ -402,7 +421,7 @@ impl Parser {
                 start_span.len = rb.1.offset + rb.1.len - start_span.offset;
                 Expr { kind: ExprKind::While { condition, body }, span: start_span }
             }
-            _ => return Err(format!("Unexpected token in expression: {}", token)),
+            _ => return self.err(format!("Unexpected token in expression: {}", token)),
         };
 
         while precedence < self.get_precedence(&self.peek().0) {
@@ -426,7 +445,7 @@ impl Parser {
                 };
                 let func_name = match left.kind {
                     ExprKind::Ident(id) => id,
-                    _ => return Err("Invalid function call target".into()),
+                    _ => return self.err("Invalid function call target".to_string()),
                 };
                 left = Expr {
                     kind: ExprKind::Call { function: func_name, arguments },
@@ -447,7 +466,7 @@ impl Parser {
                 Token::GTEqual => ">=",
                 Token::LTEqual => "<=",
                 Token::Equal => "=",
-                _ => return Err(format!("Unsupported binary operator: {:?}", op_tok)),
+                _ => return self.err(format!("Unsupported binary operator: {:?}", op_tok)),
             }.to_string();
 
             let next_prec = self.get_precedence(&op_tok);
@@ -468,7 +487,7 @@ impl Parser {
                 if let ExprKind::Ident(id) = left.kind {
                     left = Expr { kind: ExprKind::Assignment { target: id, value: Box::new(right) }, span };
                 } else {
-                    return Err("Invalid assignment target".to_string());
+                    return self.err("Invalid assignment target".to_string());
                 }
             } else {
                 left = Expr {
@@ -482,7 +501,7 @@ impl Parser {
     }
 }
 
-pub fn parse(input: Vec<(Token, Span)>) -> Result<Ast, String> {
+pub fn parse(input: Vec<(Token, Span)>) -> Result<Ast, ParseError> {
     let mut parser = Parser::new(input);
     parser.parse()
 }

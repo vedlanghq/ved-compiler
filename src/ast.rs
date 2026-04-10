@@ -46,6 +46,7 @@ pub struct GoalDecl {
     pub name: String,
     pub target: Expr,
     pub strategy: Vec<String>,
+    pub priority: u8,
     pub span: Span,
 }
 

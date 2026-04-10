@@ -151,6 +151,21 @@ impl Parser {
 
         self.consume(Token::LBrace)?;
         
+        let mut priority = 1; // Default priority
+
+        if self.check(&Token::Priority) {
+            self.consume(Token::Priority)?;
+            let tok = self.advance().0.clone();
+            if let Token::IntLiteral(p) = tok {
+                if p < 0 || p > 255 {
+                    return self.err(format!("Priority must be between 0 and 255, found {}", p));
+                }
+                priority = p as u8;
+            } else {
+                return self.err(format!("Expected integer after 'priority', found {}", tok));
+            }
+        }
+
         if self.check(&Token::Target) {
             self.consume(Token::Target)?;
         } else if let Token::Identifier(ref id) = self.peek().0 {
@@ -189,7 +204,7 @@ impl Parser {
             column: start_span.column,
         };
 
-        Ok(GoalDecl { name, target, strategy, span })
+        Ok(GoalDecl { name, target, strategy, priority, span })
     }
 
     fn parse_transition(&mut self) -> Result<TransitionDecl, ParseError> {

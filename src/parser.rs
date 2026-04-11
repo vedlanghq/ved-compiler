@@ -86,9 +86,37 @@ impl Parser {
         let mut state = Vec::new();
         let mut goals = Vec::new();
         let mut transitions = Vec::new();
+        let mut scope = None;
+        let mut required_capabilities = Vec::new();
 
         while !self.check(&Token::RBrace) && !self.check(&Token::EOF) {
             match self.peek().0 {
+                Token::Scope => {
+                    self.consume(Token::Scope)?;
+                    self.consume(Token::LBrace)?;
+                    if let Token::Identifier(s) = self.advance().0.clone() {
+                        match AuthorityScope::from_str(&s) {
+                            Ok(auth) => scope = Some(auth),
+                            Err(e) => return self.err(e),
+                        }
+                    } else {
+                        return self.err("Expected identifier in domain scope".to_string());
+                    }
+                    self.consume(Token::RBrace)?;
+                }
+                Token::Capability => {
+                    self.consume(Token::Capability)?;
+                    self.consume(Token::LBrace)?;
+                    while !self.check(&Token::RBrace) && !self.check(&Token::EOF) {
+                        let tok = self.advance().0.clone();
+                        if let Token::Identifier(id) = tok {
+                            required_capabilities.push(id);
+                        } else if tok != Token::Comma {
+                            return self.err("Expected identifier or comma in capability list".to_string());
+                        }
+                    }
+                    self.consume(Token::RBrace)?;
+                }
                 Token::State => state = self.parse_state_block()?,
                 Token::Goal => goals.push(self.parse_goal()?),
                 Token::Transition => transitions.push(self.parse_transition()?),
@@ -106,7 +134,7 @@ impl Parser {
         };
 
         Ok(Statement {
-            kind: StatementKind::DomainDecl(DomainDecl { name, state, goals, transitions }),
+            kind: StatementKind::DomainDecl(DomainDecl { name, scope, required_capabilities, state, goals, transitions }),
             span,
         })
     }
@@ -152,17 +180,50 @@ impl Parser {
         self.consume(Token::LBrace)?;
         
         let mut priority = 1; // Default priority
+        let mut scope = None;
+        let mut required_capabilities = Vec::new();
 
-        if self.check(&Token::Priority) {
-            self.consume(Token::Priority)?;
-            let tok = self.advance().0.clone();
-            if let Token::IntLiteral(p) = tok {
-                if p < 0 || p > 255 {
-                    return self.err(format!("Priority must be between 0 and 255, found {}", p));
+        while self.check(&Token::Scope) || self.check(&Token::Capability) || self.check(&Token::Priority) {
+            match self.peek().0 {
+                Token::Scope => {
+                    self.consume(Token::Scope)?;
+                    self.consume(Token::LBrace)?;
+                    if let Token::Identifier(s) = self.advance().0.clone() {
+                        match AuthorityScope::from_str(&s) {
+                            Ok(auth) => scope = Some(auth),
+                            Err(e) => return self.err(e),
+                        }
+                    } else {
+                        return self.err("Expected identifier in goal scope".to_string());
+                    }
+                    self.consume(Token::RBrace)?;
                 }
-                priority = p as u8;
-            } else {
-                return self.err(format!("Expected integer after 'priority', found {}", tok));
+                Token::Capability => {
+                    self.consume(Token::Capability)?;
+                    self.consume(Token::LBrace)?;
+                    while !self.check(&Token::RBrace) && !self.check(&Token::EOF) {
+                        let tok = self.advance().0.clone();
+                        if let Token::Identifier(id) = tok {
+                            required_capabilities.push(id);
+                        } else if tok != Token::Comma {
+                            return self.err("Expected identifier or comma in capability list".to_string());
+                        }
+                    }
+                    self.consume(Token::RBrace)?;
+                }
+                Token::Priority => {
+                    self.consume(Token::Priority)?;
+                    let tok = self.advance().0.clone();
+                    if let Token::IntLiteral(p) = tok {
+                        if p < 0 || p > 255 {
+                            return self.err(format!("Priority must be between 0 and 255, found {}", p));
+                        }
+                        priority = p as u8;
+                    } else {
+                        return self.err(format!("Expected integer after 'priority', found {}", tok));
+                    }
+                }
+                _ => break,
             }
         }
 
@@ -204,7 +265,7 @@ impl Parser {
             column: start_span.column,
         };
 
-        Ok(GoalDecl { name, target, strategy, priority, span })
+        Ok(GoalDecl { name, scope, required_capabilities, target, strategy, priority, span })
     }
 
     fn parse_transition(&mut self) -> Result<TransitionDecl, ParseError> {
@@ -215,6 +276,41 @@ impl Parser {
         };
 
         self.consume(Token::LBrace)?;
+        let mut scope = None;
+        let mut required_capabilities = Vec::new();
+
+        while self.check(&Token::Scope) || self.check(&Token::Capability) {
+            match self.peek().0 {
+                Token::Scope => {
+                    self.consume(Token::Scope)?;
+                    self.consume(Token::LBrace)?;
+                    if let Token::Identifier(s) = self.advance().0.clone() {
+                        match AuthorityScope::from_str(&s) {
+                            Ok(auth) => scope = Some(auth),
+                            Err(e) => return self.err(e),
+                        }
+                    } else {
+                        return self.err("Expected identifier in transition scope".to_string());
+                    }
+                    self.consume(Token::RBrace)?;
+                }
+                Token::Capability => {
+                    self.consume(Token::Capability)?;
+                    self.consume(Token::LBrace)?;
+                    while !self.check(&Token::RBrace) && !self.check(&Token::EOF) {
+                        let tok = self.advance().0.clone();
+                        if let Token::Identifier(id) = tok {
+                            required_capabilities.push(id);
+                        } else if tok != Token::Comma {
+                            return self.err("Expected identifier or comma in capability list".to_string());
+                        }
+                    }
+                    self.consume(Token::RBrace)?;
+                }
+                _ => break,
+            }
+        }
+
         if self.check(&Token::Slice) {
             self.consume(Token::Slice)?;
         }
@@ -235,7 +331,7 @@ impl Parser {
             column: start_span.column,
         };
 
-        Ok(TransitionDecl { name, slice_step, span })
+        Ok(TransitionDecl { name, scope, required_capabilities, slice_step, span })
     }
 
     fn parse_environment(&mut self) -> Result<Statement, ParseError> {
@@ -550,7 +646,7 @@ mod tests {
         let tokens = lex(input);
         let result = parse(tokens);
         
-        assert!(result.is_ok(), "Failed to parse AST: {}", result.err().unwrap_or_default());
+        assert!(result.is_ok(), "Failed to parse AST: {}", result.err().map(|e| e.message).unwrap_or_default());
         
         let ast = result.unwrap();
         assert_eq!(ast.statements.len(), 1);

@@ -41,6 +41,8 @@ impl CodeGenerator {
             cg.emit(OpCode::HaltSlice);
             transitions.push(TransitionBytecode {
                 name: trans.name.clone(),
+                scope: trans.scope.as_ref().map(|s| format!("{:?}", s)),
+                required_capabilities: trans.required_capabilities.clone(),
                 constants: cg.constants,
                 instructions: cg.instructions,
             });
@@ -54,6 +56,8 @@ impl CodeGenerator {
             cg.emit(OpCode::HaltSlice);
             goals.push(GoalBytecode {
                 name: goal.name.clone(),
+                scope: goal.scope.as_ref().map(|s| format!("{:?}", s)),
+                required_capabilities: goal.required_capabilities.clone(),
                 priority: goal.priority,
                 recovery_transitions: goal.strategy.clone(),
                 constants: cg.constants,
@@ -63,6 +67,8 @@ impl CodeGenerator {
 
         DomainBytecode {
             name: domain.name.clone(),
+            scope: domain.scope.as_ref().map(|s| format!("{:?}", s)),
+            capability_manifest: domain.required_capabilities.clone(),
             state_schema,
             transitions,
             goals,

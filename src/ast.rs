@@ -26,9 +26,31 @@ pub struct EnvironmentDecl {
     pub configurations: Vec<(String, Expr)>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum AuthorityScope {
+    Root,
+    Domain,
+    Goal,
+    Transition,
+}
+
+impl AuthorityScope {
+    pub fn from_str(id: &str) -> std::result::Result<Self, String> {
+        match id.to_lowercase().as_str() {
+            "root" => Ok(AuthorityScope::Root),
+            "domain" => Ok(AuthorityScope::Domain),
+            "goal" => Ok(AuthorityScope::Goal),
+            "transition" => Ok(AuthorityScope::Transition),
+            other => Err(format!("Unknown authority scope: {}", other)),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DomainDecl {
     pub name: String,
+    pub scope: Option<AuthorityScope>,
+    pub required_capabilities: Vec<String>,
     pub state: Vec<StateField>,
     pub goals: Vec<GoalDecl>,
     pub transitions: Vec<TransitionDecl>,
@@ -44,6 +66,8 @@ pub struct StateField {
 #[derive(Debug, Clone)]
 pub struct GoalDecl {
     pub name: String,
+    pub scope: Option<AuthorityScope>,
+    pub required_capabilities: Vec<String>,
     pub target: Expr,
     pub strategy: Vec<String>,
     pub priority: u8,
@@ -53,6 +77,8 @@ pub struct GoalDecl {
 #[derive(Debug, Clone)]
 pub struct TransitionDecl {
     pub name: String,
+    pub scope: Option<AuthorityScope>,
+    pub required_capabilities: Vec<String>,
     pub slice_step: Vec<Expr>,
     pub span: Span,
 }

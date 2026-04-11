@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::ast::{Ast, StatementKind, Expr, ExprKind};
+use crate::ast::{Ast, StatementKind, Expr, ExprKind, AuthorityScope};
 use miette::{Diagnostic, SourceSpan};
 use thiserror::Error;
 use crate::lexer::Span;
@@ -27,16 +27,58 @@ fn to_span(span: Span) -> SourceSpan {
 
 pub struct SemanticValidator {
     domains: HashMap<String, DomainInfo>,
+    environment_capabilities: HashMap<String, Vec<String>>,
+    environment_scopes: HashMap<String, String>,
 }
 
 struct DomainInfo {
     state_fields: HashMap<String, VedType>,
+    required_capabilities: Vec<String>,
+    scope: Option<AuthorityScope>,
 }
 
 impl SemanticValidator {
     pub fn new() -> Self {
         SemanticValidator {
             domains: HashMap::new(),
+            environment_capabilities: HashMap::new(),
+            environment_scopes: HashMap::new(),
+        }
+    }
+
+    fn scan_effects_in_expr(&self, expr: &Expr, effects_found: &mut Vec<(String, Span)>) {
+        match &expr.kind {
+            ExprKind::Send { .. } => {
+                effects_found.push(("send".to_string(), expr.span));
+            }
+            ExprKind::SendHigh { .. } => {
+                effects_found.push(("send_high".to_string(), expr.span));
+            }
+            ExprKind::Assignment { value, .. } => {
+                self.scan_effects_in_expr(value, effects_found);
+            }
+            ExprKind::BinaryOp { left, right, .. } => {
+                self.scan_effects_in_expr(left, effects_found);
+                self.scan_effects_in_expr(right, effects_found);
+            }
+            ExprKind::If { condition, consequence } => {
+                self.scan_effects_in_expr(condition, effects_found);
+                for step in consequence {
+                    self.scan_effects_in_expr(step, effects_found);
+                }
+            }
+            ExprKind::While { condition, body } => {
+                self.scan_effects_in_expr(condition, effects_found);
+                for step in body {
+                    self.scan_effects_in_expr(step, effects_found);
+                }
+            }
+            ExprKind::Call { arguments, .. } => {
+                for arg in arguments {
+                    self.scan_effects_in_expr(arg, effects_found);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -74,7 +116,13 @@ impl SemanticValidator {
                         }
                     }
 
-                    self.domains.insert(domain.name.clone(), DomainInfo { state_fields });
+                    let mut req_caps = domain.required_capabilities.clone();
+
+                    self.domains.insert(domain.name.clone(), DomainInfo { 
+                        state_fields,
+                        required_capabilities: req_caps,
+                        scope: domain.scope.clone(),
+                    });
                 }
                 StatementKind::EnvironmentDecl(env) => {
                     declared_environments.push(env.name.clone());
@@ -117,6 +165,89 @@ impl SemanticValidator {
                 for transition in &domain.transitions {
                     for expr in &transition.slice_step {
                         self.validate_expr(&domain.name, &expr, domain_info, false, &mut errors);
+                    }
+                    
+                    // A007: Check transition required capabilities against domain bounds
+                    let domain_caps = domain.required_capabilities.clone();
+                    for req in &transition.required_capabilities {
+                        if !domain_caps.contains(req) {
+                            errors.push(SemanticError {
+                                message: format!(
+                                    "A007: Capability Escalation Violation\n\
+                                     Transition '{}' in domain '{}' requires capability '{}'\n\
+                                     which exceeds domain authority.\n\n\
+                                     Domain provides: {:?}\n\
+                                     Transition requires: {:?}",
+                                    transition.name, domain.name, req,
+                                    domain_caps, transition.required_capabilities
+                                ),
+                                span: to_span(transition.span),
+                            });
+                        }
+                    }
+
+                    // A008: Check that emitted effects have corresponding capabilities
+                    let mut effects_found = Vec::new();
+                    for expr in &transition.slice_step {
+                        self.scan_effects_in_expr(expr, &mut effects_found);
+                    }
+                    
+                    if !effects_found.is_empty() {
+                        let has_messaging = transition.required_capabilities.contains(&"messaging".to_string());
+                        if !has_messaging {
+                            for (effect_type, span) in effects_found {
+                                errors.push(SemanticError {
+                                    message: format!(
+                                        "A008: Effect Emission Capability Missing\n\
+                                         Transition '{}' in domain '{}' emits '{}' effect\n\
+                                         but lacks 'messaging' capability.\n\n\
+                                         Transition capabilities: {:?}\n\
+                                         Required to emit effects: \"messaging\"\n\n\
+                                         Resolution:\nAdd 'messaging' to transition capabilities",
+                                        transition.name, domain.name, effect_type,
+                                        transition.required_capabilities
+                                    ),
+                                    span: to_span(span),
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // Check goal required capabilities against domain bounds
+                for goal in &domain.goals {
+                    for req in &goal.required_capabilities {
+                        if !domain.required_capabilities.contains(req) {
+                            errors.push(SemanticError {
+                                message: format!(
+                                    "A007: Capability Escalation Violation\n\
+                                     Goal '{}' in domain '{}' requires capability '{}'\n\
+                                     which exceeds domain authority.\n\n\
+                                     Domain provides: {:?}\n\
+                                     Goal requires: {:?}",
+                                    goal.name, domain.name, req,
+                                    domain.required_capabilities, goal.required_capabilities
+                                ),
+                                span: to_span(goal.span),
+                            });
+                        }
+                    }
+
+                    // A008: Goals cannot emit effects (pure constraint)
+                    let mut effects_found = Vec::new();
+                    self.scan_effects_in_expr(&goal.target, &mut effects_found);
+                    
+                    for (effect_type, span) in effects_found {
+                        errors.push(SemanticError {
+                            message: format!(
+                                "A008: Effect Emission in Pure Context\n\
+                                 Goal '{}' in domain '{}' illegally emits '{}' effect.\n\
+                                 Goals must be strictly pure and side-effect free.\n\n\
+                                 Resolution:\nMove side effects to a transition",
+                                goal.name, domain.name, effect_type
+                            ),
+                            span: to_span(span),
+                        });
                     }
                 }
             }

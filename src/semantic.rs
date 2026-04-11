@@ -126,6 +126,17 @@ impl SemanticValidator {
                 }
                 StatementKind::EnvironmentDecl(env) => {
                     declared_environments.push(env.name.clone());
+                    
+                    self.environment_capabilities.insert(env.name.clone(), env.available_capabilities.clone());
+                    
+                    let scope_str = match &env.scope_level {
+                        Some(crate::ast::AuthorityScope::Root) => "root",
+                        Some(crate::ast::AuthorityScope::Domain) => "domain",
+                        Some(crate::ast::AuthorityScope::Goal) => "goal",
+                        Some(crate::ast::AuthorityScope::Transition) => "transition",
+                        None => "domain", // Default
+                    };
+                    self.environment_scopes.insert(env.name.clone(), scope_str.to_string());
                 }
                 _ => {}
             }

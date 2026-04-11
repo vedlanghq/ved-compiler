@@ -23,6 +23,8 @@ pub struct DeployStmt {
 #[derive(Debug, Clone)]
 pub struct EnvironmentDecl {
     pub name: String,
+    pub scope_level: Option<AuthorityScope>,
+    pub available_capabilities: Vec<String>,
     pub configurations: Vec<(String, Expr)>,
 }
 

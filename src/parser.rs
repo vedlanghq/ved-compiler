@@ -342,15 +342,48 @@ impl Parser {
         };
         self.consume(Token::LBrace)?;
         
+        let mut scope_level = None;
+        let mut available_capabilities = Vec::new();
         let mut configurations = Vec::new();
+
         while !self.check(&Token::RBrace) && self.pos < self.tokens.len() {
-            let key = match self.advance().0.clone() {
-                Token::Identifier(id) => id,
-                _ => return self.err("Expected configuration key".to_string()),
-            };
-            self.consume(Token::Equal)?;
-            let value = self.parse_statement_or_expr()?;
-            configurations.push((key, value));
+            match self.peek().0 {
+                Token::Scope => {
+                    self.consume(Token::Scope)?;
+                    self.consume(Token::LBrace)?;
+                    if let Token::Identifier(s) = self.advance().0.clone() {
+                        match AuthorityScope::from_str(&s) {
+                            Ok(auth) => scope_level = Some(auth),
+                            Err(e) => return self.err(e),
+                        }
+                    } else {
+                        return self.err("Expected identifier in environment scope".to_string());
+                    }
+                    self.consume(Token::RBrace)?;
+                }
+                Token::Capability => {
+                    self.consume(Token::Capability)?;
+                    self.consume(Token::LBrace)?;
+                    while !self.check(&Token::RBrace) && !self.check(&Token::EOF) {
+                        let tok = self.advance().0.clone();
+                        if let Token::Identifier(id) = tok {
+                            available_capabilities.push(id);
+                        } else if tok != Token::Comma {
+                            return self.err("Expected identifier or comma in capability list".to_string());
+                        }
+                    }
+                    self.consume(Token::RBrace)?;
+                }
+                _ => {
+                    let key = match self.advance().0.clone() {
+                        Token::Identifier(id) => id,
+                        _ => return self.err("Expected configuration key, scope, or capability".to_string()),
+                    };
+                    self.consume(Token::Equal)?;
+                    let value = self.parse_statement_or_expr()?;
+                    configurations.push((key, value));
+                }
+            }
         }
         let rb = self.consume(Token::RBrace)?;
 
@@ -362,7 +395,7 @@ impl Parser {
         };
 
         Ok(Statement {
-            kind: StatementKind::EnvironmentDecl(EnvironmentDecl { name, configurations }),
+            kind: StatementKind::EnvironmentDecl(EnvironmentDecl { name, scope_level, available_capabilities, configurations }),
             span,
         })
     }

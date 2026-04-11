@@ -94,13 +94,17 @@ impl Parser {
                 Token::Scope => {
                     self.consume(Token::Scope)?;
                     self.consume(Token::LBrace)?;
-                    if let Token::Identifier(s) = self.advance().0.clone() {
-                        match AuthorityScope::from_str(&s) {
-                            Ok(auth) => scope = Some(auth),
-                            Err(e) => return self.err(e),
-                        }
-                    } else {
-                        return self.err("Expected identifier in domain scope".to_string());
+                    let scope_tok = self.advance().0.clone();
+                    let s = match scope_tok {
+                        Token::Identifier(id) => id,
+                        Token::Domain => "domain".to_string(),
+                        Token::Goal => "goal".to_string(),
+                        Token::Transition => "transition".to_string(),
+                        _ => return self.err("Expected identifier or scope keyword in domain scope".to_string()),
+                    };
+                    match AuthorityScope::from_str(&s) {
+                        Ok(auth) => scope = Some(auth),
+                        Err(e) => return self.err(e),
                     }
                     self.consume(Token::RBrace)?;
                 }
@@ -110,7 +114,17 @@ impl Parser {
                     while !self.check(&Token::RBrace) && !self.check(&Token::EOF) {
                         let tok = self.advance().0.clone();
                         if let Token::Identifier(id) = tok {
-                            required_capabilities.push(id);
+                            let mut cap = id;
+                            if self.check(&Token::Colon) {
+                                self.consume(Token::Colon)?;
+                                cap.push(':');
+                                if let Token::Identifier(id2) = self.advance().0.clone() {
+                                    cap.push_str(&id2);
+                                } else {
+                                    return self.err("Expected identifier after colon".to_string());
+                                }
+                            }
+                            required_capabilities.push(cap);
                         } else if tok != Token::Comma {
                             return self.err("Expected identifier or comma in capability list".to_string());
                         }
@@ -204,7 +218,17 @@ impl Parser {
                     while !self.check(&Token::RBrace) && !self.check(&Token::EOF) {
                         let tok = self.advance().0.clone();
                         if let Token::Identifier(id) = tok {
-                            required_capabilities.push(id);
+                            let mut cap = id;
+                            if self.check(&Token::Colon) {
+                                self.consume(Token::Colon)?;
+                                cap.push(':');
+                                if let Token::Identifier(id2) = self.advance().0.clone() {
+                                    cap.push_str(&id2);
+                                } else {
+                                    return self.err("Expected identifier after colon".to_string());
+                                }
+                            }
+                            required_capabilities.push(cap);
                         } else if tok != Token::Comma {
                             return self.err("Expected identifier or comma in capability list".to_string());
                         }
@@ -284,13 +308,17 @@ impl Parser {
                 Token::Scope => {
                     self.consume(Token::Scope)?;
                     self.consume(Token::LBrace)?;
-                    if let Token::Identifier(s) = self.advance().0.clone() {
-                        match AuthorityScope::from_str(&s) {
-                            Ok(auth) => scope = Some(auth),
-                            Err(e) => return self.err(e),
-                        }
-                    } else {
-                        return self.err("Expected identifier in transition scope".to_string());
+                    let scope_tok = self.advance().0.clone();
+                    let s = match scope_tok {
+                        Token::Identifier(id) => id,
+                        Token::Domain => "domain".to_string(),
+                        Token::Goal => "goal".to_string(),
+                        Token::Transition => "transition".to_string(),
+                        _ => return self.err("Expected identifier or scope keyword in transition scope".to_string()),
+                    };
+                    match AuthorityScope::from_str(&s) {
+                        Ok(auth) => scope = Some(auth),
+                        Err(e) => return self.err(e),
                     }
                     self.consume(Token::RBrace)?;
                 }
@@ -300,7 +328,17 @@ impl Parser {
                     while !self.check(&Token::RBrace) && !self.check(&Token::EOF) {
                         let tok = self.advance().0.clone();
                         if let Token::Identifier(id) = tok {
-                            required_capabilities.push(id);
+                            let mut cap = id;
+                            if self.check(&Token::Colon) {
+                                self.consume(Token::Colon)?;
+                                cap.push(':');
+                                if let Token::Identifier(id2) = self.advance().0.clone() {
+                                    cap.push_str(&id2);
+                                } else {
+                                    return self.err("Expected identifier after colon".to_string());
+                                }
+                            }
+                            required_capabilities.push(cap);
                         } else if tok != Token::Comma {
                             return self.err("Expected identifier or comma in capability list".to_string());
                         }
@@ -351,13 +389,17 @@ impl Parser {
                 Token::Scope => {
                     self.consume(Token::Scope)?;
                     self.consume(Token::LBrace)?;
-                    if let Token::Identifier(s) = self.advance().0.clone() {
-                        match AuthorityScope::from_str(&s) {
-                            Ok(auth) => scope_level = Some(auth),
-                            Err(e) => return self.err(e),
-                        }
-                    } else {
-                        return self.err("Expected identifier in environment scope".to_string());
+                    let scope_tok = self.advance().0.clone();
+                    let s = match scope_tok {
+                        Token::Identifier(id) => id,
+                        Token::Domain => "domain".to_string(),
+                        Token::Goal => "goal".to_string(),
+                        Token::Transition => "transition".to_string(),
+                        _ => return self.err("Expected identifier or scope keyword in environment scope".to_string()),
+                    };
+                    match AuthorityScope::from_str(&s) {
+                        Ok(auth) => scope_level = Some(auth),
+                        Err(e) => return self.err(e),
                     }
                     self.consume(Token::RBrace)?;
                 }
@@ -367,7 +409,17 @@ impl Parser {
                     while !self.check(&Token::RBrace) && !self.check(&Token::EOF) {
                         let tok = self.advance().0.clone();
                         if let Token::Identifier(id) = tok {
-                            available_capabilities.push(id);
+                            let mut cap = id;
+                            if self.check(&Token::Colon) {
+                                self.consume(Token::Colon)?;
+                                cap.push(':');
+                                if let Token::Identifier(id2) = self.advance().0.clone() {
+                                    cap.push_str(&id2);
+                                } else {
+                                    return self.err("Expected identifier after colon".to_string());
+                                }
+                            }
+                            available_capabilities.push(cap);
                         } else if tok != Token::Comma {
                             return self.err("Expected identifier or comma in capability list".to_string());
                         }

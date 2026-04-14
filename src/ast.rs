@@ -55,6 +55,7 @@ pub struct DomainDecl {
     pub required_capabilities: Vec<String>,
     pub state: Vec<StateField>,
     pub goals: Vec<GoalDecl>,
+    pub invariants: Vec<InvariantDecl>,
     pub transitions: Vec<TransitionDecl>,
 }
 
@@ -73,6 +74,13 @@ pub struct GoalDecl {
     pub target: Expr,
     pub strategy: Vec<String>,
     pub priority: u8,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct InvariantDecl {
+    pub name: String,
+    pub predicate: Expr,
     pub span: Span,
 }
 

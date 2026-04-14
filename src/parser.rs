@@ -85,6 +85,7 @@ impl Parser {
 
         let mut state = Vec::new();
         let mut goals = Vec::new();
+        let mut invariants = Vec::new();
         let mut transitions = Vec::new();
         let mut scope = None;
         let mut required_capabilities = Vec::new();
@@ -133,6 +134,7 @@ impl Parser {
                 }
                 Token::State => state = self.parse_state_block()?,
                 Token::Goal => goals.push(self.parse_goal()?),
+                Token::Invariant => invariants.push(self.parse_invariant()?),
                 Token::Transition => transitions.push(self.parse_transition()?),
                 _ => return self.err(format!("Unexpected token in domain body: {}", self.peek().0)),
             }
@@ -148,7 +150,7 @@ impl Parser {
         };
 
         Ok(Statement {
-            kind: StatementKind::DomainDecl(DomainDecl { name, scope, required_capabilities, state, goals, transitions }),
+            kind: StatementKind::DomainDecl(DomainDecl { name, scope, required_capabilities, state, goals, invariants, transitions }),
             span,
         })
     }
@@ -290,6 +292,28 @@ impl Parser {
         };
 
         Ok(GoalDecl { name, scope, required_capabilities, target, strategy, priority, span })
+    }
+
+    fn parse_invariant(&mut self) -> Result<InvariantDecl, ParseError> {
+        let start_span = self.consume(Token::Invariant)?.1.clone();
+        let name = match self.advance().0.clone() {
+            Token::Identifier(id) => id,
+            other => return self.err(format!("Expected invariant name, found {}", other)),
+        };
+
+        self.consume(Token::LBrace)?;
+
+        let predicate = self.parse_statement_or_expr()?;
+
+        let rb = self.consume(Token::RBrace)?;
+        let span = Span {
+            offset: start_span.offset,
+            len: rb.1.offset + rb.1.len - start_span.offset,
+            line: start_span.line,
+            column: start_span.column,
+        };
+
+        Ok(InvariantDecl { name, predicate, span })
     }
 
     fn parse_transition(&mut self) -> Result<TransitionDecl, ParseError> {

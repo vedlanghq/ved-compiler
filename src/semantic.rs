@@ -172,6 +172,11 @@ impl SemanticValidator {
                     self.validate_expr(&domain.name, &goal.target, domain_info, true, &mut errors);
                 }
 
+                // Validate Invariants (Strictly Pure)
+                for invariant in &domain.invariants {
+                    self.validate_expr(&domain.name, &invariant.predicate, domain_info, true, &mut errors);
+                }
+
                 // Validate Transitions (Allow Mutations/Effects)
                 for transition in &domain.transitions {
                     for expr in &transition.slice_step {

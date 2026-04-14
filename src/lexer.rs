@@ -18,6 +18,7 @@ pub enum Token {
     State,
     Transition,
     Goal,
+    Invariant,
     Reconcile,
     Migration,
 
@@ -94,6 +95,7 @@ impl std::fmt::Display for Token {
             Token::State => write!(f, "'state'"),
             Token::Transition => write!(f, "'transition'"),
             Token::Goal => write!(f, "'goal'"),
+            Token::Invariant => write!(f, "'invariant'"),
             Token::Reconcile => write!(f, "'reconcile'"),
             Token::Migration => write!(f, "'migration'"),
             Token::Environment => write!(f, "'environment'"),
@@ -216,6 +218,7 @@ impl<'a> Lexer<'a> {
             "state" => Token::State,
             "transition" => Token::Transition,
             "goal" => Token::Goal,
+            "invariant" => Token::Invariant,
             "reconcile" => Token::Reconcile,
             "migration" => Token::Migration,
             "start" => Token::Start,

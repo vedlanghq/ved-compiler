@@ -65,6 +65,18 @@ impl CodeGenerator {
             });
         }
 
+        let mut invariants = Vec::new();
+        for invariant in &domain.invariants {
+            let mut cg = FuncGen::new(&field_map);
+            let _res_reg = cg.compile_expr(&invariant.predicate);
+            cg.emit(OpCode::HaltSlice);
+            invariants.push(InvariantBytecode {
+                name: invariant.name.clone(),
+                constants: cg.constants,
+                instructions: cg.instructions,
+            });
+        }
+
         DomainBytecode {
             name: domain.name.clone(),
             scope: domain.scope.as_ref().map(|s| format!("{:?}", s)),
@@ -72,6 +84,7 @@ impl CodeGenerator {
             state_schema,
             transitions,
             goals,
+            invariants,
         }
     }
 }

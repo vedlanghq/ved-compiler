@@ -116,7 +116,7 @@ impl SemanticValidator {
                         }
                     }
 
-                    let mut req_caps = domain.required_capabilities.clone();
+                    let req_caps = domain.required_capabilities.clone();
 
                     self.domains.insert(domain.name.clone(), DomainInfo { 
                         state_fields,

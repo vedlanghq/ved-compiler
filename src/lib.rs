@@ -29,7 +29,7 @@ pub struct ParseCompileError {
 
 pub fn compile_source(source: &str) -> Result<codegen::BytecodeProgram, Report> {
     let tokens = lexer::lex(source);
-    for (t, span) in &tokens {
+    for (t, _span) in &tokens {
         if let lexer::Token::Unknown(c) = t {
             // Note: Single unknown char error could be a diagnostic too
             return Err(miette::miette!("Unknown character: {}", c));

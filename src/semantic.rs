@@ -116,6 +116,28 @@ impl SemanticValidator {
                         }
                     }
 
+                    if let Some(scope) = &domain.scope {
+                        match scope {
+                            crate::ast::AuthorityScope::Transition => {
+                                if !domain.state.is_empty() || !domain.goals.is_empty() || !domain.invariants.is_empty() {
+                                    errors.push(SemanticError {
+                                        message: format!("Domain '{}' with scope 'transition' cannot declare state, goals, or invariants", domain.name),
+                                        span: (0, 0).into(),
+                                    });
+                                }
+                            }
+                            crate::ast::AuthorityScope::Goal => {
+                                if !domain.state.is_empty() || !domain.invariants.is_empty() {
+                                    errors.push(SemanticError {
+                                        message: format!("Domain '{}' with scope 'goal' cannot declare state or invariants", domain.name),
+                                        span: (0, 0).into(),
+                                    });
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
                     let req_caps = domain.required_capabilities.clone();
 
                     self.domains.insert(domain.name.clone(), DomainInfo { 

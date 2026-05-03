@@ -1,6 +1,6 @@
 use crate::ast::{Ast, Expr, ExprKind, StatementKind, DomainDecl};
 use std::collections::HashMap;
-pub use ved_ir::bytecode::*;
+pub use Lexum_ir::bytecode::*;
 
 pub struct CodeGenerator {
     program: BytecodeProgram,

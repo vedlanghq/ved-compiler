@@ -14,7 +14,7 @@ pub enum VedType {
 
 #[derive(Debug, Error, Diagnostic)]
 #[error("{message}")]
-#[diagnostic(code(ved::semantic))]
+#[diagnostic(code(Lexum::semantic))]
 pub struct SemanticError {
     pub message: String,
     #[label("here")]

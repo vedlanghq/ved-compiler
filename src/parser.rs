@@ -5,7 +5,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error, Diagnostic)]
 #[error("{message}")]
-#[diagnostic(code(ved::syntax))]
+#[diagnostic(code(Lexum::syntax))]
 pub struct ParseError {
     pub message: String,
     #[label("expected token here")]

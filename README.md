@@ -1,11 +1,11 @@
-# ved-compiler
+# Lexum-compiler
 
-Frontend and compilation pipeline for the Ved programming language.
+Frontend and compilation pipeline for the Lexum programming language.
 
 ## Overview
 
-`ved-compiler` transforms Ved source code into executable bundles for the
-Ved runtime.
+`Lexum-compiler` transforms Lexum source code into executable bundles for the
+Lexum runtime.
 
 The compiler pipeline is expected to include:
 
@@ -16,7 +16,7 @@ The compiler pipeline is expected to include:
 - lowering into deterministic intermediate representation
 - bytecode generation and bundle packaging
 
-Ved programs describe control-plane behaviour rather than application logic.
+Lexum programs describe control-plane behaviour rather than application logic.
 The compiler therefore emphasizes correctness, structural clarity, and
 deterministic execution semantics.
 
